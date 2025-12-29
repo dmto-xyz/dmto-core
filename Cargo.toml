@@ -1,1 +1,3 @@
-workspace = { members = ["cli"] }
+[workspace]
+resolver = "3"
+members = ["cli", "dmto-ecash"]
