@@ -4,7 +4,10 @@ use dashmap::DashSet;
 use rand::RngCore;
 use secp256k1::{PublicKey, Secp256k1, SecretKey};
 
-use crate::{blind::blind_sign, types::Note};
+use crate::{
+    blind::{DLEQ, blind_sign},
+    types::Note,
+};
 
 #[derive(Clone)]
 pub struct MintKey {
@@ -75,7 +78,7 @@ impl Mint {
         &self,
         inputs: Vec<Note>,
         outputs: Vec<(u64, PublicKey)>,
-    ) -> Option<Vec<PublicKey>> {
+    ) -> Option<Vec<(PublicKey, DLEQ)>> {
         let in_sum: u64 = inputs.iter().map(|n| n.value).sum();
         let out_sum: u64 = outputs.iter().map(|(v, _)| *v).sum();
 
