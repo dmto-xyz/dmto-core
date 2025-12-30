@@ -1,7 +1,7 @@
 use rand::RngCore;
 
 use crate::{
-    blind::{blind_message, unblind_signature},
+    blind::{blind_message, unblind_signature, verify_dleq},
     hash::hash_to_curve,
     mint::Mint,
     types::Note,
@@ -35,6 +35,7 @@ fn main() {
     let mut blinded_outputs = vec![];
     let mut bob_blinds = vec![];
     let mut bob_secrets = vec![];
+    let mut bob_blinded_points = vec![]; // Keep B' for later DLEQ verification
 
     for value in [4u64, 2u64] {
         let mut secret = vec![0u8; 32];
@@ -46,10 +47,11 @@ fn main() {
         blinded_outputs.push((value, blinded.blinded_point));
         bob_blinds.push(blinded.blind_factor);
         bob_secrets.push(secret);
+        bob_blinded_points.push(blinded.blinded_point);
     }
 
     // Mint performs swap: burns Alice's notes, blindly signs Bob's
-    let blind_sigs = mint
+    let blind_sigs_with_proof = mint
         .swap(alice.notes.clone(), blinded_outputs)
         .expect("swap failed");
 
@@ -60,8 +62,15 @@ fn main() {
     for i in 0..values.len() {
         let value = values[i];
         let key = mint.keys.get(&value).unwrap();
+        let (c_prime, dleq) = &blind_sigs_with_proof[i];
+        let c = unblind_signature(c_prime, &bob_blinds[i], &key.pubkey);
 
-        let c = unblind_signature(&blind_sigs[i], &bob_blinds[i], &key.pubkey);
+        assert!(
+            verify_dleq(&bob_blinded_points[i], c_prime, &key.pubkey, dleq),
+            "DLEQ verification failed for {} unit note!",
+            value
+        );
+        println!("DLEQ proof verified for {} unit note", value);
 
         let y = hash_to_curve(&bob_secrets[i]);
 
