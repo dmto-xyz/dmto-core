@@ -127,19 +127,63 @@ messaging (email 2.0) as the first application built on top.
 
 ### 4.4 Ecash as spam protection
 
-Sending through a relay is **gated by ecash**: a sender attaches ecash (a fee or
-proof-of-payment) to have a message routed/held. This makes bulk unsolicited messaging
-costly and gives relays a sustainable, spam-resistant economic model. The ecash used
-here is drawn from the economy layer (§3), so anti-spam and value transfer share one
-system.
+Anti-spam works by **attaching ecash to a message**. A message can carry **two
+independent, optional postage components**, each demanded by a different party and each
+denominated in **whatever issuer that party chooses to accept** (§3.1, §3.4):
+
+| Component | Demanded by | Purpose | Issuer chosen by |
+| --------- | ----------- | ------- | ---------------- |
+| **Recipient postage** | the recipient | protects the recipient's inbox from spam | the recipient |
+| **Relay postage** | the relay server | protects/pays the relay for routing and storage | the relay |
+
+Both are **optional and independent**: a message may carry one, both, or (for
+allowlisted/free paths) neither. Each component can be a **different ecash** — the two
+parties need not accept the same issuer.
+
+Crucially, **the accepted issuer is a free choice with no fixed pairing.** Whoever
+demands postage may require **any issuer's ecash they trust** (§3.4) — their own, another
+user's, a relay's, another relay's, a community's — in any combination. A recipient is
+not tied to their own ecash or to a relay's; a relay is not tied to its own ecash. The
+two components can name the same issuer or two different ones. There is no rule that
+links who is charging to which issuer they must accept.
+
+This keeps anti-spam and value transfer on one system (§3): the ecash demanded is drawn
+from the economy layer, and the sender obtains whatever is required via exchange (§3.3).
+
+### 4.5 Postage policy and the "own-ecash" case
+
+Each party publishes a **postage policy**: whether postage is required, the accepted
+issuer(s), the amount, exemptions, and refund rules — all local decisions (§3.4).
+
+A common and useful special case is a party requiring **its own issued ecash**. When Bob
+requires 1–2 units of *Bob's* ecash, that ecash acts as **personal postage stamps only
+Bob mints**: it gains intrinsic demand (it buys access to Bob), and the stamp
+round-trips — the sender **acquires** Bob's ecash (§3.3), hands it back with the message,
+and Bob is effectively paid at acquisition time and can re-issue redeemed stamps within
+his published supply (§3.2). The same pattern applies to a relay requiring its own ecash.
+
+Whether or not the own-ecash case is used, usable postage **requires** three companions:
+
+- **Delegation (§3.5).** Since a recipient is often offline, a **delegated server** sells
+  the required ecash and accepts postage on their behalf — otherwise a new sender could
+  never reach an offline recipient.
+- **Posted-price acquisition.** There must be an on-demand way to buy the required ecash
+  (a price posted by the accepting party or its delegate), so one-off senders aren't
+  blocked by thin markets.
+- **Allowlist and refunds.** Known contacts can be exempted, and postage can be refunded
+  on accept, so legitimate correspondents aren't charged for every message.
 
 ---
 
 ## 5. Target user cases
 
-1. **Spam-resistant messaging.** Alice emails Bob over dmto. Her client attaches ecash
-   the relay requires; strangers pay a small amount to reach Bob, so spam is
-   uneconomical while normal correspondence is cheap or refundable.
+1. **Spam-resistant messaging with two-part postage.** To reach Bob, Alice's message
+   carries up to two postage components (§4.4): **relay postage** the relay requires for
+   routing (say, in that relay's ecash) and **recipient postage** Bob requires for his
+   inbox (say, 1–2 units of Bob's own ecash — or, if Bob prefers, a relay's ecash). Alice
+   acquires whatever each party accepts via exchange (§3.3) at a posted price. Strangers
+   pay to reach Bob, so spam is uneconomical, while allowlisted contacts are exempt and
+   legitimate messages can be refunded on accept.
 
 2. **Receiving while offline.** Bob is offline for days. Relays hold his incoming
    messages (and can retain a backup) and deliver them when he reconnects.
