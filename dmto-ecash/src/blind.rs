@@ -1,18 +1,38 @@
 use rand::RngCore;
 use secp256k1::{PublicKey, Scalar, Secp256k1, SecretKey};
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::error::{Error, Result};
 
-#[derive(Clone)]
+/// (De)serialize a [`Scalar`] as its 32-byte big-endian encoding, since
+/// `secp256k1::Scalar` does not implement `serde` itself.
+mod scalar_serde {
+    use secp256k1::Scalar;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S: Serializer>(scalar: &Scalar, s: S) -> std::result::Result<S::Ok, S::Error> {
+        scalar.to_be_bytes().serialize(s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> std::result::Result<Scalar, D::Error> {
+        let bytes = <[u8; 32]>::deserialize(d)?;
+        Scalar::from_be_bytes(bytes).map_err(|_| serde::de::Error::custom("scalar out of range"))
+    }
+}
+
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct BlindedMessage {
     pub blinded_point: PublicKey,
+    #[serde(with = "scalar_serde")]
     pub blind_factor: Scalar,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct DLEQ {
+    #[serde(with = "scalar_serde")]
     pub e: Scalar,
+    #[serde(with = "scalar_serde")]
     pub s: Scalar,
 }
 
@@ -178,5 +198,20 @@ mod tests {
 
         let wrong_pk = PublicKey::from_secret_key(&secp, &SecretKey::new(&mut rand::thread_rng()));
         assert!(!verify_dleq(&bm.blinded_point, &c_prime, &wrong_pk, &proof));
+    }
+
+    #[test]
+    fn blinded_message_and_dleq_serde_roundtrip() {
+        let sk = SecretKey::new(&mut rand::thread_rng());
+        let y = hash_to_curve(b"secret");
+        let bm = blind_message(&y).unwrap();
+        let (_c_prime, proof) = blind_sign(&sk, &bm.blinded_point).unwrap();
+
+        let bm2: BlindedMessage =
+            serde_json::from_str(&serde_json::to_string(&bm).unwrap()).unwrap();
+        assert!(bm == bm2);
+
+        let proof2: DLEQ = serde_json::from_str(&serde_json::to_string(&proof).unwrap()).unwrap();
+        assert!(proof == proof2);
     }
 }

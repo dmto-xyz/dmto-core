@@ -34,6 +34,9 @@ BDHKE scheme:
 - **`types.rs`** — the `Note { value, secret, y, c }` type.
 - **`error.rs`** — the crate `Error`/`Result`; library paths return errors instead of panicking.
 
+`Note`, `BlindedMessage`, and `DLEQ` implement `serde` for a wire format (scalars are
+encoded as 32-byte big-endian values).
+
 Run the tests with `cargo test -p dmto-ecash`.
 
 The cryptographic walkthrough lives in [docs/blindsign.md](./docs/blindsign.md).
