@@ -19,16 +19,16 @@ only.
 **Goal:** turn the demo into a dependable, tested library with real error handling and a
 wire format — the substrate every later phase builds on.
 
-- [ ] Split library API from the `main.rs` demo; expose a clean `dmto-ecash` lib crate.
-- [ ] Replace `.unwrap()` paths with a proper `Error` enum and `Result` returns.
+- [x] Split library API from the `main.rs` demo; expose a clean `dmto-ecash` lib crate.
+- [x] Replace `.unwrap()` paths with a proper `Error` enum and `Result` returns.
 - [ ] Add `serde` (de)serialization for `Note`, `BlindedMessage`, and `DLEQ` (wire format).
-- [ ] Unit tests for `hash_to_curve`, blind/unblind, DLEQ verify (incl. failure cases),
+- [x] Unit tests for `hash_to_curve`, blind/unblind, DLEQ verify (incl. failure cases),
       and mint `verify_and_spend` / `swap` (incl. double-spend and value-mismatch).
 - [ ] Introduce **keysets** (a mint's set of per-denomination keys with a keyset id).
 - [ ] CI: `cargo build`, `cargo test`, `cargo clippy`, `cargo fmt --check`.
 
 **Exit criteria:** `cargo test` covers the crypto and mint logic; no `unwrap` in library
-paths; notes and proofs round-trip through serde.
+paths; notes and proofs round-trip through serde. _(serde + keysets + CI remaining.)_
 **SPEC:** §2.
 
 ## Phase 1 — Ecash as a service

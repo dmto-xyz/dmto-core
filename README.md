@@ -15,7 +15,7 @@ economy** where value can be issued, exchanged, and spent without a central issu
 
 | Crate         | Status      | What it is |
 | ------------- | ----------- | ---------- |
-| `dmto-ecash`  | working PoC | Cashu-style blind Diffie–Hellman (BDHKE) ecash: mint, wallet, blind signatures, DLEQ proofs, double-spend prevention. |
+| `dmto-ecash`  | library + demo | Cashu-style blind Diffie–Hellman (BDHKE) ecash: mint, wallet, blind signatures, DLEQ proofs, double-spend prevention. Typed `Error`/`Result` API with unit tests. |
 | `cli`         | stub        | Placeholder binary (`Hello, world!`) — intended entry point for a node/wallet CLI. |
 
 ## What `dmto-ecash` does today
@@ -32,6 +32,9 @@ BDHKE scheme:
   (burn input notes, blind-sign new outputs, enforcing value conservation).
 - **`wallet.rs`** — a `Wallet` that mints notes and spends them.
 - **`types.rs`** — the `Note { value, secret, y, c }` type.
+- **`error.rs`** — the crate `Error`/`Result`; library paths return errors instead of panicking.
+
+Run the tests with `cargo test -p dmto-ecash`.
 
 The cryptographic walkthrough lives in [docs/blindsign.md](./docs/blindsign.md).
 

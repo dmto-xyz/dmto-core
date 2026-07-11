@@ -2,6 +2,8 @@ use rand::RngCore;
 use secp256k1::{PublicKey, Scalar, Secp256k1, SecretKey};
 use sha2::{Digest, Sha256};
 
+use crate::error::{Error, Result};
+
 #[derive(Clone)]
 pub struct BlindedMessage {
     pub blinded_point: PublicKey,
@@ -18,40 +20,43 @@ fn random_scalar() -> Scalar {
     loop {
         let mut bytes = [0u8; 32];
         rand::thread_rng().fill_bytes(&mut bytes);
-        if let Ok(s) = Scalar::from_be_bytes(bytes) {
-            if s != Scalar::ZERO {
-                return s;
-            }
+        if let Ok(s) = Scalar::from_be_bytes(bytes)
+            && s != Scalar::ZERO
+        {
+            return s;
         }
     }
 }
 
-pub fn blind_message(y: &PublicKey) -> BlindedMessage {
+fn scalar_to_secret(s: &Scalar) -> Result<SecretKey> {
+    SecretKey::from_slice(&s.to_be_bytes()).map_err(Error::from)
+}
+
+pub fn blind_message(y: &PublicKey) -> Result<BlindedMessage> {
     let secp = Secp256k1::new();
     let r = random_scalar();
 
-    let r_g = PublicKey::from_secret_key(&secp, &SecretKey::from_slice(&r.to_be_bytes()).unwrap());
+    let r_g = PublicKey::from_secret_key(&secp, &scalar_to_secret(&r)?);
+    let blinded_point = y.combine(&r_g)?;
 
-    let blinded_point = y.combine(&r_g).unwrap();
-
-    BlindedMessage {
+    Ok(BlindedMessage {
         blinded_point,
         blind_factor: r,
-    }
+    })
 }
 
-pub fn blind_sign(privkey: &SecretKey, blinded_point: &PublicKey) -> (PublicKey, DLEQ) {
+pub fn blind_sign(privkey: &SecretKey, blinded_point: &PublicKey) -> Result<(PublicKey, DLEQ)> {
     let secp = Secp256k1::new();
-    let a = Scalar::from_be_bytes(privkey.secret_bytes()).unwrap();
+    let a = Scalar::from_be_bytes(privkey.secret_bytes()).map_err(|_| Error::InvalidScalar)?;
 
-    let c_prime = blinded_point.mul_tweak(&secp, &a).unwrap();
+    let c_prime = blinded_point.mul_tweak(&secp, &a)?;
 
     // Generate DLEQ proof: prove log_G(A) == log_{B'}(C')
     let r = random_scalar(); // nonce
-    let r_g = PublicKey::from_secret_key(&secp, &SecretKey::from_slice(&r.to_be_bytes()).unwrap()); // R1 = r*G
-    let r_b = blinded_point.mul_tweak(&secp, &r).unwrap(); // R2 = r*B'
+    let r_g = PublicKey::from_secret_key(&secp, &scalar_to_secret(&r)?); // R1 = r*G
+    let r_b = blinded_point.mul_tweak(&secp, &r)?; // R2 = r*B'
 
-    let a_pub = PublicKey::from_secret_key(&secp, &privkey); // A = a*G
+    let a_pub = PublicKey::from_secret_key(&secp, privkey); // A = a*G
 
     // Challenge e = hash(R1 || R2 || A || C')
     let mut hasher = Sha256::new();
@@ -61,58 +66,58 @@ pub fn blind_sign(privkey: &SecretKey, blinded_point: &PublicKey) -> (PublicKey,
     hasher.update(c_prime.serialize());
     let hash = hasher.finalize();
 
-    let e = Scalar::from_be_bytes(hash.into()).unwrap(); // reduce mod order if needed, but secp handles
-    let e_sk: SecretKey = SecretKey::from_slice(&e.to_be_bytes()).unwrap();
+    let e = Scalar::from_be_bytes(hash.into()).map_err(|_| Error::InvalidScalar)?;
+    let e_sk = scalar_to_secret(&e)?;
 
-    // s1 = e*a
-    let s1: SecretKey = e_sk.mul_tweak(&a).unwrap();
-
-    // s = r + s1
-    let r_sk = SecretKey::from_slice(&r.to_be_bytes()).unwrap();
+    // s = r + e*a
+    let s1 = e_sk.mul_tweak(&a)?;
+    let r_sk = scalar_to_secret(&r)?;
     let s_sk = r_sk
-        .add_tweak(&Scalar::from_be_bytes(s1.secret_bytes()).unwrap())
-        .unwrap();
-    let s = Scalar::from_be_bytes(s_sk.secret_bytes()).unwrap();
+        .add_tweak(&Scalar::from_be_bytes(s1.secret_bytes()).map_err(|_| Error::InvalidScalar)?)?;
+    let s = Scalar::from_be_bytes(s_sk.secret_bytes()).map_err(|_| Error::InvalidScalar)?;
 
-    let proof = DLEQ { e, s };
-
-    (c_prime, proof)
+    Ok((c_prime, DLEQ { e, s }))
 }
 
 pub fn unblind_signature(
     blind_sig: &PublicKey,
     blind_factor: &Scalar,
     mint_pubkey: &PublicKey,
-) -> PublicKey {
+) -> Result<PublicKey> {
     let secp = Secp256k1::new();
-    let r_k = mint_pubkey.mul_tweak(&secp, blind_factor).unwrap();
-    blind_sig.combine(&r_k.negate(&secp)).unwrap()
+    let r_k = mint_pubkey.mul_tweak(&secp, blind_factor)?;
+    blind_sig.combine(&r_k.negate(&secp)).map_err(Error::from)
 }
 
+/// Verify a DLEQ proof. Returns `false` on any invalid or malformed input rather
+/// than panicking, since the proof may come from an untrusted source.
 pub fn verify_dleq(
     b_prime: &PublicKey,
     c_prime: &PublicKey,
     a_pub: &PublicKey,
     proof: &DLEQ,
 ) -> bool {
+    verify_dleq_inner(b_prime, c_prime, a_pub, proof).unwrap_or(false)
+}
+
+fn verify_dleq_inner(
+    b_prime: &PublicKey,
+    c_prime: &PublicKey,
+    a_pub: &PublicKey,
+    proof: &DLEQ,
+) -> Result<bool> {
     let secp = Secp256k1::new();
 
     // Recompute R1 = s*G - e*A
-    let e_a = a_pub.mul_tweak(&secp, &proof.e).unwrap();
-    let r1 = PublicKey::from_secret_key(
-        &secp,
-        &SecretKey::from_slice(&proof.s.to_be_bytes()).unwrap(),
-    )
-    .combine(&e_a.negate(&secp))
-    .unwrap();
+    let e_a = a_pub.mul_tweak(&secp, &proof.e)?;
+    let r1 = PublicKey::from_secret_key(&secp, &scalar_to_secret(&proof.s)?)
+        .combine(&e_a.negate(&secp))?;
 
     // Recompute R2 = s*B' - e*C'
-    let e_c = c_prime.mul_tweak(&secp, &proof.e).unwrap();
+    let e_c = c_prime.mul_tweak(&secp, &proof.e)?;
     let r2 = b_prime
-        .mul_tweak(&secp, &proof.s)
-        .unwrap()
-        .combine(&e_c.negate(&secp))
-        .unwrap();
+        .mul_tweak(&secp, &proof.s)?
+        .combine(&e_c.negate(&secp))?;
 
     // Recompute challenge
     let mut hasher = Sha256::new();
@@ -121,7 +126,57 @@ pub fn verify_dleq(
     hasher.update(a_pub.serialize());
     hasher.update(c_prime.serialize());
     let hash = hasher.finalize();
-    let e_computed = Scalar::from_be_bytes(hash.into()).unwrap();
+    let e_computed = Scalar::from_be_bytes(hash.into()).map_err(|_| Error::InvalidScalar)?;
 
-    e_computed == proof.e
+    Ok(e_computed == proof.e)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::hash::hash_to_curve;
+
+    #[test]
+    fn blind_unblind_roundtrip_equals_direct_signature() {
+        let secp = Secp256k1::new();
+        let sk = SecretKey::new(&mut rand::thread_rng());
+        let pk = PublicKey::from_secret_key(&secp, &sk);
+
+        let y = hash_to_curve(b"secret");
+        let bm = blind_message(&y).unwrap();
+        let (c_prime, proof) = blind_sign(&sk, &bm.blinded_point).unwrap();
+
+        assert!(verify_dleq(&bm.blinded_point, &c_prime, &pk, &proof));
+
+        let c = unblind_signature(&c_prime, &bm.blind_factor, &pk).unwrap();
+        let direct = y.mul_tweak(&secp, &sk.into()).unwrap();
+        assert_eq!(c, direct, "unblinded signature must equal x*Y");
+    }
+
+    #[test]
+    fn dleq_rejects_tampered_proof() {
+        let secp = Secp256k1::new();
+        let sk = SecretKey::new(&mut rand::thread_rng());
+        let pk = PublicKey::from_secret_key(&secp, &sk);
+
+        let y = hash_to_curve(b"secret");
+        let bm = blind_message(&y).unwrap();
+        let (c_prime, mut proof) = blind_sign(&sk, &bm.blinded_point).unwrap();
+
+        proof.e = random_scalar();
+        assert!(!verify_dleq(&bm.blinded_point, &c_prime, &pk, &proof));
+    }
+
+    #[test]
+    fn dleq_rejects_wrong_key() {
+        let secp = Secp256k1::new();
+        let sk = SecretKey::new(&mut rand::thread_rng());
+
+        let y = hash_to_curve(b"secret");
+        let bm = blind_message(&y).unwrap();
+        let (c_prime, proof) = blind_sign(&sk, &bm.blinded_point).unwrap();
+
+        let wrong_pk = PublicKey::from_secret_key(&secp, &SecretKey::new(&mut rand::thread_rng()));
+        assert!(!verify_dleq(&bm.blinded_point, &c_prime, &wrong_pk, &proof));
+    }
 }

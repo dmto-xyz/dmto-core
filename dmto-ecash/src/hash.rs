@@ -18,3 +18,18 @@ pub fn hash_to_curve(secret: &[u8]) -> PublicKey {
         ctr += 1;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deterministic_for_same_secret() {
+        assert_eq!(hash_to_curve(b"hello"), hash_to_curve(b"hello"));
+    }
+
+    #[test]
+    fn distinct_secrets_give_distinct_points() {
+        assert_ne!(hash_to_curve(b"a"), hash_to_curve(b"b"));
+    }
+}
