@@ -15,6 +15,7 @@ fn main() -> Result<()> {
     let denoms = vec![1, 2, 4, 8];
     let mint = Mint::new(&denoms);
     println!("Mint initialized with denoms: {:?}", denoms);
+    println!("Keyset id: {}", mint.id());
 
     // Alice mints ecash (direct issuance)
     let mut alice = Wallet { notes: vec![] };

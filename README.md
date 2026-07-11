@@ -30,6 +30,8 @@ BDHKE scheme:
 - **`mint.rs`** — a `Mint` holding one keypair per denomination, `verify_and_spend`
   (checks `C == x·Y` and rejects double-spends via a spent-secret set), and `swap`
   (burn input notes, blind-sign new outputs, enforcing value conservation).
+- **`keyset.rs`** — a `KeysetId` derived deterministically from a mint's public keys, and
+  the `PublicKeyset` a wallet fetches and verifies against.
 - **`wallet.rs`** — a `Wallet` that mints notes and spends them.
 - **`types.rs`** — the `Note { value, secret, y, c }` type.
 - **`error.rs`** — the crate `Error`/`Result`; library paths return errors instead of panicking.

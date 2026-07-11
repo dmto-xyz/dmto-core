@@ -5,6 +5,7 @@
 pub mod blind;
 pub mod error;
 pub mod hash;
+pub mod keyset;
 pub mod mint;
 pub mod types;
 pub mod wallet;

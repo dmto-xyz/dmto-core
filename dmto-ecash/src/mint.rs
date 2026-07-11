@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use dashmap::DashSet;
 use secp256k1::{PublicKey, Secp256k1, SecretKey};
@@ -6,6 +6,7 @@ use secp256k1::{PublicKey, Secp256k1, SecretKey};
 use crate::{
     blind::{DLEQ, blind_sign},
     error::{Error, Result},
+    keyset::{KeysetId, PublicKeyset},
     types::Note,
 };
 
@@ -31,16 +32,36 @@ impl MintKey {
 }
 
 pub struct Mint {
+    pub id: KeysetId,
     pub keys: HashMap<u64, MintKey>,
     pub spent: DashSet<Vec<u8>>,
 }
 
 impl Mint {
     pub fn new(denoms: &[u64]) -> Self {
-        let keys = denoms.iter().map(|&v| (v, MintKey::new(v))).collect();
+        let keys: HashMap<u64, MintKey> = denoms.iter().map(|&v| (v, MintKey::new(v))).collect();
+        let id = KeysetId::derive(&Self::pubkey_map(&keys));
         Self {
+            id,
             keys,
             spent: DashSet::new(),
+        }
+    }
+
+    fn pubkey_map(keys: &HashMap<u64, MintKey>) -> BTreeMap<u64, PublicKey> {
+        keys.iter().map(|(&v, k)| (v, k.pubkey)).collect()
+    }
+
+    /// This mint's keyset id.
+    pub fn id(&self) -> KeysetId {
+        self.id
+    }
+
+    /// The public keyset (id + per-denomination public keys) a wallet verifies against.
+    pub fn public_keyset(&self) -> PublicKeyset {
+        PublicKeyset {
+            id: self.id,
+            keys: Self::pubkey_map(&self.keys),
         }
     }
 

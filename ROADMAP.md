@@ -24,11 +24,11 @@ wire format — the substrate every later phase builds on.
 - [x] Add `serde` (de)serialization for `Note`, `BlindedMessage`, and `DLEQ` (wire format).
 - [x] Unit tests for `hash_to_curve`, blind/unblind, DLEQ verify (incl. failure cases),
       and mint `verify_and_spend` / `swap` (incl. double-spend and value-mismatch).
-- [ ] Introduce **keysets** (a mint's set of per-denomination keys with a keyset id).
+- [x] Introduce **keysets** (a mint's set of per-denomination keys with a keyset id).
 - [ ] CI: `cargo build`, `cargo test`, `cargo clippy`, `cargo fmt --check`.
 
 **Exit criteria:** `cargo test` covers the crypto and mint logic; no `unwrap` in library
-paths; notes and proofs round-trip through serde. _(keysets + CI remaining.)_
+paths; notes and proofs round-trip through serde. _(CI remaining.)_
 **SPEC:** §2.
 
 ## Phase 1 — Ecash as a service
