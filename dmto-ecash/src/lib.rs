@@ -2,6 +2,7 @@
 //!
 //! See `SPEC.md` §2 for the design and `docs/blindsign.md` for the underlying math.
 
+pub mod api;
 pub mod blind;
 pub mod error;
 pub mod hash;

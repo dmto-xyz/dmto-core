@@ -35,12 +35,14 @@ paths; notes and proofs round-trip through serde. **Met.**
 
 **Goal:** run a mint as a networked service with persistence and a real client wallet.
 
-- [ ] Define the mint API (mint / swap / melt / keyset info) as request/response types.
-- [ ] Mint server binary over a chosen transport (HTTP or a framed TCP protocol — TBD).
+- [x] Define the mint API (mint / swap / melt / keyset info) as request/response types.
+- [ ] Mint server binary: **HTTP** (axum) for request/response; **WebSocket** for real-time.
 - [ ] Wallet client that talks to a remote mint and stores notes on disk.
-- [ ] Persist mint state (issued keysets, spent-secret set) durably.
+- [ ] Persist mint state (issued keysets, spent-secret set) in **Postgres via sqlx**.
 - [ ] **Issuer identity:** each mint has a stable issuer keypair/id, published with its keysets.
 - [ ] **Total-supply accounting** per keyset, published and verifiable.
+
+**Stack:** Postgres + `sqlx`; HTTP by default, WebSocket where real-time is needed (see Decisions).
 
 **Exit criteria:** a wallet on one process mints, swaps, and spends against a mint on
 another process, across restarts; total supply is queryable.
@@ -123,9 +125,15 @@ on their behalf within the granted constraints.
   **[implemented]** and update the README status table.
 - **Testing:** unit tests per module; integration tests per phase exit criterion.
 
+## Decisions
+
+- **Transport:** HTTP (request/response) as the default, WebSocket for real-time
+  connections (e.g. live message delivery, notifications).
+- **Persistence:** PostgreSQL accessed via `sqlx`.
+
 ## Open questions
 
-- Transport for the mint/relay APIs (HTTP vs. custom framed protocol).
 - Backing of ecash units (abstract units vs. Lightning/on-chain) — currently abstract.
 - Exchange rate discovery (posted price vs. order book vs. AMM).
 - Identity/addressing scheme for users and issuers.
+- HTTP server framework: assuming **axum** unless decided otherwise.

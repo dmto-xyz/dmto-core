@@ -32,6 +32,8 @@ BDHKE scheme:
   (burn input notes, blind-sign new outputs, enforcing value conservation).
 - **`keyset.rs`** — a `KeysetId` derived deterministically from a mint's public keys, and
   the `PublicKeyset` a wallet fetches and verifies against.
+- **`api.rs`** — serde wire types for the mint's HTTP API (`mint` / `swap` / `melt` /
+  keyset), and `Mint::process_*` handlers bridging them to the core operations.
 - **`wallet.rs`** — a `Wallet` that mints notes and spends them.
 - **`types.rs`** — the `Note { value, secret, y, c }` type.
 - **`error.rs`** — the crate `Error`/`Result`; library paths return errors instead of panicking.

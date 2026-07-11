@@ -4,6 +4,10 @@ use dashmap::DashSet;
 use secp256k1::{PublicKey, Secp256k1, SecretKey};
 
 use crate::{
+    api::{
+        BlindSignature, BlindedOutput, MeltRequest, MeltResponse, MintRequest, SignatureResponse,
+        SwapRequest,
+    },
     blind::{DLEQ, blind_sign},
     error::{Error, Result},
     keyset::{KeysetId, PublicKeyset},
@@ -115,17 +119,62 @@ impl Mint {
             self.verify_and_spend(n)?;
         }
 
+        self.sign_outputs(&outputs)
+    }
+
+    /// Blind-sign each `(value, blinded_point)` output. Fails without signing any
+    /// output if a denomination is unknown.
+    fn sign_outputs(&self, outputs: &[(u64, PublicKey)]) -> Result<Vec<(PublicKey, DLEQ)>> {
         let mut sigs = Vec::with_capacity(outputs.len());
         for (value, blinded) in outputs {
             let key = self
                 .keys
-                .get(&value)
-                .ok_or(Error::UnknownDenomination(value))?;
-            sigs.push(blind_sign(&key.privkey, &blinded)?);
+                .get(value)
+                .ok_or(Error::UnknownDenomination(*value))?;
+            sigs.push(blind_sign(&key.privkey, blinded)?);
         }
-
         Ok(sigs)
     }
+
+    // --- API handlers (bridge wire types to core operations) ---
+
+    /// Handle a `POST /v1/mint`: issue ecash by blind-signing the outputs.
+    pub fn process_mint(&self, req: MintRequest) -> Result<SignatureResponse> {
+        let sigs = self.sign_outputs(&to_pairs(&req.outputs))?;
+        Ok(build_response(&req.outputs, sigs))
+    }
+
+    /// Handle a `POST /v1/swap`: burn inputs and blind-sign equal-value outputs.
+    pub fn process_swap(&self, req: SwapRequest) -> Result<SignatureResponse> {
+        let sigs = self.swap(req.inputs, to_pairs(&req.outputs))?;
+        Ok(build_response(&req.outputs, sigs))
+    }
+
+    /// Handle a `POST /v1/melt`: redeem notes back to the mint.
+    pub fn process_melt(&self, req: MeltRequest) -> Result<MeltResponse> {
+        for n in &req.inputs {
+            self.verify_and_spend(n)?;
+        }
+        let melted = req.inputs.iter().map(|n| n.value).sum();
+        Ok(MeltResponse { melted })
+    }
+}
+
+fn to_pairs(outputs: &[BlindedOutput]) -> Vec<(u64, PublicKey)> {
+    outputs.iter().map(|o| (o.value, o.blinded_point)).collect()
+}
+
+fn build_response(outputs: &[BlindedOutput], sigs: Vec<(PublicKey, DLEQ)>) -> SignatureResponse {
+    let signatures = outputs
+        .iter()
+        .zip(sigs)
+        .map(|(o, (c_prime, dleq))| BlindSignature {
+            value: o.value,
+            c_prime,
+            dleq,
+        })
+        .collect();
+    SignatureResponse { signatures }
 }
 
 #[cfg(test)]
@@ -238,5 +287,74 @@ mod tests {
         // Inputs were not spent, since output validation happens first.
         assert!(mint.verify_and_spend(&inputs[0]).is_ok());
         assert!(mint.verify_and_spend(&inputs[1]).is_ok());
+    }
+
+    #[test]
+    fn process_swap_produces_verifiable_signatures() {
+        use crate::api::{BlindedOutput, SwapRequest};
+        use crate::blind::{unblind_signature, verify_dleq};
+
+        let mint = Mint::new(&[1, 2, 4, 8]);
+        let mut w = Wallet { notes: vec![] };
+        w.mint_note(&mint, 4).unwrap();
+        w.mint_note(&mint, 2).unwrap();
+        let inputs = w.notes.clone();
+
+        // Build a blinded output of value 6 -> split into 4 + 2.
+        let mut outputs = vec![];
+        let mut blinds = vec![];
+        for v in [4u64, 2u64] {
+            let y = hash_to_curve(format!("out{v}").as_bytes());
+            let bm = blind_message(&y).unwrap();
+            outputs.push(BlindedOutput {
+                value: v,
+                blinded_point: bm.blinded_point,
+            });
+            blinds.push(bm.blind_factor);
+        }
+
+        let resp = mint
+            .process_swap(SwapRequest {
+                inputs,
+                outputs: outputs.clone(),
+            })
+            .unwrap();
+        assert_eq!(resp.signatures.len(), 2);
+
+        // Each returned blind signature verifies and unblinds against the keyset.
+        for (i, sig) in resp.signatures.iter().enumerate() {
+            let pubkey = mint.keys.get(&sig.value).unwrap().pubkey;
+            assert!(verify_dleq(
+                &outputs[i].blinded_point,
+                &sig.c_prime,
+                &pubkey,
+                &sig.dleq
+            ));
+            let _c = unblind_signature(&sig.c_prime, &blinds[i], &pubkey).unwrap();
+        }
+    }
+
+    #[test]
+    fn process_melt_burns_inputs_and_reports_total() {
+        use crate::api::MeltRequest;
+
+        let mint = Mint::new(&[1, 2, 4, 8]);
+        let mut w = Wallet { notes: vec![] };
+        w.mint_note(&mint, 4).unwrap();
+        w.mint_note(&mint, 2).unwrap();
+        let inputs = w.notes.clone();
+
+        let resp = mint
+            .process_melt(MeltRequest {
+                inputs: inputs.clone(),
+            })
+            .unwrap();
+        assert_eq!(resp.melted, 6);
+
+        // Re-melting the same notes is rejected as a double-spend.
+        assert!(matches!(
+            mint.process_melt(MeltRequest { inputs }),
+            Err(Error::DoubleSpend)
+        ));
     }
 }
