@@ -16,6 +16,7 @@ economy** where value can be issued, exchanged, and spent without a central issu
 | Crate         | Status      | What it is |
 | ------------- | ----------- | ---------- |
 | `dmto-ecash`  | library + demo | Cashu-style blind Diffie–Hellman (BDHKE) ecash: mint, wallet, blind signatures, DLEQ proofs, double-spend prevention. Typed `Error`/`Result` API with unit tests. |
+| `dmto-relay`  | server (early) | axum HTTP server hosting the mint API (`/v1/mint`, `/v1/swap`, `/v1/melt`, `/v1/keyset`). Message routing comes in later phases. |
 | `cli`         | stub        | Placeholder binary (`Hello, world!`) — intended entry point for a node/wallet CLI. |
 
 ## What `dmto-ecash` does today
@@ -53,6 +54,17 @@ cargo run -p dmto-ecash
 
 This runs an end-to-end scenario: Alice mints notes, swaps them to Bob (blinded, with
 DLEQ verification), Bob spends, and a double-spend attempt is rejected.
+
+## Run the relay server
+
+```sh
+cargo run -p dmto-relay          # listens on 0.0.0.0:3000
+curl http://127.0.0.1:3000/v1/keyset
+```
+
+Override the bind address with `DMTO_RELAY_ADDR=127.0.0.1:3999`. The server currently
+exposes the mint API (`/v1/mint`, `/v1/swap`, `/v1/melt`, `/v1/keyset`) with an
+in-memory mint; Postgres persistence and message routing come next.
 
 ## Where this is going
 

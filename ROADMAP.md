@@ -36,7 +36,8 @@ paths; notes and proofs round-trip through serde. **Met.**
 **Goal:** run a mint as a networked service with persistence and a real client wallet.
 
 - [x] Define the mint API (mint / swap / melt / keyset info) as request/response types.
-- [ ] Mint server binary: **HTTP** (axum) for request/response; **WebSocket** for real-time.
+- [x] Mint server binary (`dmto-relay`): **HTTP** (axum) endpoints for mint / swap / melt /
+      keyset. _(WebSocket for real-time delivery arrives with messaging in Phase 3.)_
 - [ ] Wallet client that talks to a remote mint and stores notes on disk.
 - [ ] Persist mint state (issued keysets, spent-secret set) in **Postgres via sqlx**.
 - [ ] **Issuer identity:** each mint has a stable issuer keypair/id, published with its keysets.
