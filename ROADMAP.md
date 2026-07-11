@@ -14,7 +14,7 @@ only.
 
 ---
 
-## Phase 0 — Harden the ecash core
+## Phase 0 — Harden the ecash core ✅
 
 **Goal:** turn the demo into a dependable, tested library with real error handling and a
 wire format — the substrate every later phase builds on.
@@ -25,10 +25,10 @@ wire format — the substrate every later phase builds on.
 - [x] Unit tests for `hash_to_curve`, blind/unblind, DLEQ verify (incl. failure cases),
       and mint `verify_and_spend` / `swap` (incl. double-spend and value-mismatch).
 - [x] Introduce **keysets** (a mint's set of per-denomination keys with a keyset id).
-- [ ] CI: `cargo build`, `cargo test`, `cargo clippy`, `cargo fmt --check`.
+- [x] CI: `cargo build`, `cargo test`, `cargo clippy`, `cargo fmt --check`.
 
 **Exit criteria:** `cargo test` covers the crypto and mint logic; no `unwrap` in library
-paths; notes and proofs round-trip through serde. _(CI remaining.)_
+paths; notes and proofs round-trip through serde. **Met.**
 **SPEC:** §2.
 
 ## Phase 1 — Ecash as a service
