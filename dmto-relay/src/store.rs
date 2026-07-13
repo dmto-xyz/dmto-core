@@ -1,11 +1,9 @@
-//! Postgres-backed persistence for the relay's mint.
-//!
-//! Slice A persists the mint's keyset (signing keys) so the keyset id is stable
-//! across restarts. The spent-secret set is persisted in a later slice.
+//! Postgres-backed persistence for the relay's mint: the keyset (signing keys,
+//! so the keyset id is stable across restarts) and the spent-secret set.
 
 use std::fmt;
 
-use dmto_ecash::mint::{Mint, MintKey};
+use dmto_ecash::mint::MintKey;
 use secp256k1::SecretKey;
 use sqlx::{PgPool, Row};
 
@@ -33,9 +31,12 @@ impl From<sqlx::Error> for StoreError {
     }
 }
 
-/// Load the mint's keyset from the database, generating and persisting a fresh
-/// set for `denoms` the first time (when the table is empty).
-pub async fn load_or_create_mint(pool: &PgPool, denoms: &[u64]) -> Result<Mint, StoreError> {
+/// Load the mint's signing keys from the database, generating and persisting a
+/// fresh set for `denoms` the first time (when the table is empty).
+pub async fn load_or_create_keys(
+    pool: &PgPool,
+    denoms: &[u64],
+) -> Result<Vec<MintKey>, StoreError> {
     let rows = sqlx::query("SELECT value, privkey FROM mint_key ORDER BY value")
         .fetch_all(pool)
         .await?;
@@ -53,7 +54,7 @@ pub async fn load_or_create_mint(pool: &PgPool, denoms: &[u64]) -> Result<Mint, 
             keys.push(key);
         }
         tx.commit().await?;
-        Ok(Mint::from_mint_keys(keys))
+        Ok(keys)
     } else {
         let mut keys = Vec::with_capacity(rows.len());
         for row in rows {
@@ -63,6 +64,6 @@ pub async fn load_or_create_mint(pool: &PgPool, denoms: &[u64]) -> Result<Mint, 
                 SecretKey::from_slice(&bytes).map_err(|e| StoreError::BadKey(e.to_string()))?;
             keys.push(MintKey::from_privkey(value as u64, sk));
         }
-        Ok(Mint::from_mint_keys(keys))
+        Ok(keys)
     }
 }

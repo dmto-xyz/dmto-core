@@ -36,6 +36,13 @@ impl MintKey {
             pubkey,
         }
     }
+
+    /// Check that a note carries this key's valid signature (`C == x·Y`). Does not
+    /// consult any spent set.
+    pub fn verify_note(&self, note: &Note) -> Result<bool> {
+        let expected = note.y.mul_tweak(&Secp256k1::new(), &self.privkey.into())?;
+        Ok(note.c == expected)
+    }
 }
 
 pub struct Mint {
@@ -87,8 +94,7 @@ impl Mint {
             .get(&note.value)
             .ok_or(Error::UnknownDenomination(note.value))?;
 
-        let expected = note.y.mul_tweak(&Secp256k1::new(), &key.privkey.into())?;
-        if note.c != expected {
+        if !key.verify_note(note)? {
             return Err(Error::InvalidSignature);
         }
 
