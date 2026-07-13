@@ -17,7 +17,7 @@ economy** where value can be issued, exchanged, and spent without a central issu
 | ------------- | ----------- | ---------- |
 | `dmto-ecash`  | library + demo | Cashu-style blind Diffie–Hellman (BDHKE) ecash: mint, wallet, blind signatures, DLEQ proofs, double-spend prevention. Typed `Error`/`Result` API with unit tests. |
 | `dmto-relay`  | server (early) | axum HTTP server hosting the mint API (`/v1/mint`, `/v1/swap`, `/v1/melt`, `/v1/keyset`), with its keyset and spent-secret set persisted in Postgres (sqlx). Message routing comes in later phases. |
-| `cli`         | stub        | Placeholder binary (`Hello, world!`) — intended entry point for a node/wallet CLI. |
+| `dmto-cli`    | wallet client | Blocking HTTP client for the relay's mint: fetch keyset, mint (blind → sign → verify DLEQ → unblind), store notes on disk, show balance, melt. |
 
 ## What `dmto-ecash` does today
 
@@ -76,6 +76,21 @@ The Postgres-backed double-spend test is ignored by default (it needs a database
 ```sh
 cargo test -p dmto-relay -- --ignored
 ```
+
+## Use the wallet client
+
+With a relay running, drive it with `dmto-cli` (config via `DMTO_RELAY_URL`, default
+`http://127.0.0.1:3000`, and `DMTO_WALLET`, default `./wallet.json`):
+
+```sh
+cargo run -p dmto-cli -- keyset       # show the mint's keyset and denominations
+cargo run -p dmto-cli -- mint 6       # mint 6 units, store notes on disk
+cargo run -p dmto-cli -- balance      # -> 6
+cargo run -p dmto-cli -- melt 6       # redeem notes back to the mint
+```
+
+The client blinds each note, verifies the mint's DLEQ proof before accepting a signature,
+and persists notes as JSON.
 
 ## Where this is going
 

@@ -38,7 +38,8 @@ paths; notes and proofs round-trip through serde. **Met.**
 - [x] Define the mint API (mint / swap / melt / keyset info) as request/response types.
 - [x] Mint server binary (`dmto-relay`): **HTTP** (axum) endpoints for mint / swap / melt /
       keyset. _(WebSocket for real-time delivery arrives with messaging in Phase 3.)_
-- [ ] Wallet client that talks to a remote mint and stores notes on disk.
+- [x] Wallet client (`dmto-cli`) that talks to a remote mint over HTTP and stores notes on
+      disk (`keyset` / `mint` / `balance` / `list` / `melt`; verifies DLEQ before accepting).
 - [x] Persist mint state in **Postgres via sqlx**: keyset (signing keys) so the keyset id
       is stable across restarts, and the spent-secret set (atomic per-request transaction,
       unique-violation → double-spend) so double-spend protection survives restarts.
