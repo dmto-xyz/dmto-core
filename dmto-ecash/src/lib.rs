@@ -6,6 +6,7 @@ pub mod api;
 pub mod blind;
 pub mod error;
 pub mod hash;
+pub mod issuer;
 pub mod keyset;
 pub mod mint;
 pub mod types;

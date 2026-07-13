@@ -14,9 +14,14 @@ use axum::{
     routing::{get, post},
 };
 use dmto_ecash::{
-    api::{MeltRequest, MeltResponse, MintRequest, SignatureResponse, SwapRequest},
+    api::{
+        MeltRequest, MeltResponse, MintInfo, MintRequest, SignatureResponse, SupplyResponse,
+        SwapRequest,
+    },
+    issuer::IssuerId,
     keyset::PublicKeyset,
 };
+use secp256k1::{PublicKey, Secp256k1};
 use sqlx::postgres::PgPoolOptions;
 
 use mint_api::{AppError, MintApi, PgMint};
@@ -34,7 +39,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     sqlx::migrate!("./migrations").run(&pool).await?;
 
     let keys = store::load_or_create_keys(&pool, DENOMINATIONS).await?;
-    let mint = Arc::new(PgMint::new(pool, keys));
+    let issuer_sk = store::load_or_create_issuer(&pool).await?;
+    let issuer = IssuerId::new(PublicKey::from_secret_key(&Secp256k1::new(), &issuer_sk));
+    let mint = Arc::new(PgMint::new(pool, keys, issuer));
+    println!("dmto-relay issuer: {issuer}");
     println!("dmto-relay mint keyset: {}", mint.public_keyset().id);
 
     let addr = std::env::var("DMTO_RELAY_ADDR").unwrap_or_else(|_| "0.0.0.0:3000".to_string());
@@ -49,11 +57,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// in-memory mint while `main` supplies the Postgres-backed one.
 fn app<M: MintApi>(mint: Arc<M>) -> Router {
     Router::new()
+        .route("/v1/info", get(info::<M>))
         .route("/v1/keyset", get(keyset::<M>))
+        .route("/v1/supply", get(supply::<M>))
         .route("/v1/mint", post(mint_ecash::<M>))
         .route("/v1/swap", post(swap::<M>))
         .route("/v1/melt", post(melt::<M>))
         .with_state(mint)
+}
+
+async fn info<M: MintApi>(State(mint): State<Arc<M>>) -> Json<MintInfo> {
+    Json(mint.mint_info())
+}
+
+async fn supply<M: MintApi>(State(mint): State<Arc<M>>) -> Result<Json<SupplyResponse>, AppError> {
+    Ok(Json(mint.supply().await?))
 }
 
 async fn keyset<M: MintApi>(State(mint): State<Arc<M>>) -> Json<PublicKeyset> {
@@ -97,7 +115,7 @@ mod tests {
     use tower::ServiceExt;
 
     fn in_memory(denoms: &[u64]) -> Arc<InMemoryMint> {
-        Arc::new(InMemoryMint(Mint::new(denoms)))
+        Arc::new(InMemoryMint::new(Mint::new(denoms)))
     }
 
     async fn send(
@@ -134,6 +152,17 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         let ks: PublicKeyset = serde_json::from_slice(&body).unwrap();
         assert_eq!(ks.id, expected);
+    }
+
+    #[tokio::test]
+    async fn info_is_served() {
+        let mint = in_memory(&[1, 2, 4]);
+        let expected = mint.mint_info();
+        let (status, body) = send(app(mint), "GET", "/v1/info", None).await;
+        assert_eq!(status, StatusCode::OK);
+        let info: MintInfo = serde_json::from_slice(&body).unwrap();
+        assert_eq!(info.issuer, expected.issuer);
+        assert_eq!(info.keyset.id, expected.keyset.id);
     }
 
     #[tokio::test]
@@ -235,8 +264,10 @@ mod tests {
         let keys = store::load_or_create_keys(&pool, DENOMINATIONS)
             .await
             .unwrap();
+        let issuer_sk = store::load_or_create_issuer(&pool).await.unwrap();
+        let issuer = IssuerId::new(PublicKey::from_secret_key(&Secp256k1::new(), &issuer_sk));
 
-        let mint1 = PgMint::new(pool.clone(), keys.clone());
+        let mint1 = PgMint::new(pool.clone(), keys.clone(), issuer);
         let pubkey = mint1.public_keyset().keys[&4];
 
         // Issue a value-4 note (unique secret so reruns don't collide).
@@ -274,7 +305,7 @@ mod tests {
         assert_eq!(melted.melted, 4);
 
         // A brand-new instance sharing the pool rejects the same note.
-        let mint2 = PgMint::new(pool, keys);
+        let mint2 = PgMint::new(pool, keys, issuer);
         let result = mint2.process_melt(MeltRequest { inputs: vec![note] }).await;
         assert!(matches!(
             result,

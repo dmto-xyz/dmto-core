@@ -31,6 +31,25 @@ impl From<sqlx::Error> for StoreError {
     }
 }
 
+/// Load the relay's issuer private key, generating and persisting one the first
+/// time. The issuer identity (its public key) is thus stable across restarts.
+pub async fn load_or_create_issuer(pool: &PgPool) -> Result<SecretKey, StoreError> {
+    if let Some(row) = sqlx::query("SELECT privkey FROM issuer_key LIMIT 1")
+        .fetch_optional(pool)
+        .await?
+    {
+        let bytes: Vec<u8> = row.get("privkey");
+        return SecretKey::from_slice(&bytes).map_err(|e| StoreError::BadKey(e.to_string()));
+    }
+
+    let sk = SecretKey::new(&mut secp256k1::rand::thread_rng());
+    sqlx::query("INSERT INTO issuer_key (privkey) VALUES ($1)")
+        .bind(sk.secret_bytes().to_vec())
+        .execute(pool)
+        .await?;
+    Ok(sk)
+}
+
 /// Load the mint's signing keys from the database, generating and persisting a
 /// fresh set for `denoms` the first time (when the table is empty).
 pub async fn load_or_create_keys(

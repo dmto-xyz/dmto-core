@@ -79,7 +79,7 @@ impl fmt::Debug for KeysetId {
 
 /// The public half of a mint's keyset: the id plus the per-denomination public
 /// keys, suitable for a wallet to fetch and verify against.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PublicKeyset {
     pub id: KeysetId,
     pub keys: BTreeMap<u64, PublicKey>,

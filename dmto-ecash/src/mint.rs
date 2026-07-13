@@ -1,12 +1,12 @@
 use std::collections::{BTreeMap, HashMap};
 
-use dashmap::DashSet;
+use dashmap::{DashMap, DashSet};
 use secp256k1::{PublicKey, Secp256k1, SecretKey};
 
 use crate::{
     api::{
         BlindSignature, BlindedOutput, MeltRequest, MeltResponse, MintRequest, SignatureResponse,
-        SwapRequest,
+        SupplyResponse, SwapRequest,
     },
     blind::{DLEQ, blind_sign},
     error::{Error, Result},
@@ -49,6 +49,10 @@ pub struct Mint {
     pub id: KeysetId,
     pub keys: HashMap<u64, MintKey>,
     pub spent: DashSet<Vec<u8>>,
+    /// Total value issued per denomination.
+    issued: DashMap<u64, u64>,
+    /// Total value redeemed (spent) per denomination.
+    redeemed: DashMap<u64, u64>,
 }
 
 impl Mint {
@@ -66,6 +70,8 @@ impl Mint {
             id,
             keys,
             spent: DashSet::new(),
+            issued: DashMap::new(),
+            redeemed: DashMap::new(),
         }
     }
 
@@ -104,6 +110,7 @@ impl Mint {
             return Err(Error::DoubleSpend);
         }
 
+        *self.redeemed.entry(note.value).or_insert(0) += note.value;
         Ok(())
     }
 
@@ -157,13 +164,16 @@ impl Mint {
     /// Handle a `POST /v1/mint`: issue ecash by blind-signing the outputs.
     pub fn process_mint(&self, req: MintRequest) -> Result<SignatureResponse> {
         let sigs = self.sign_outputs(&to_pairs(&req.outputs))?;
+        self.record_issued(&req.outputs);
         Ok(build_response(&req.outputs, sigs))
     }
 
     /// Handle a `POST /v1/swap`: burn inputs and blind-sign equal-value outputs.
     pub fn process_swap(&self, req: SwapRequest) -> Result<SignatureResponse> {
+        let outputs = req.outputs.clone();
         let sigs = self.swap(req.inputs, to_pairs(&req.outputs))?;
-        Ok(build_response(&req.outputs, sigs))
+        self.record_issued(&outputs);
+        Ok(build_response(&outputs, sigs))
     }
 
     /// Handle a `POST /v1/melt`: redeem notes back to the mint.
@@ -173,6 +183,34 @@ impl Mint {
         }
         let melted = req.inputs.iter().map(|n| n.value).sum();
         Ok(MeltResponse { melted })
+    }
+
+    fn record_issued(&self, outputs: &[BlindedOutput]) {
+        for out in outputs {
+            *self.issued.entry(out.value).or_insert(0) += out.value;
+        }
+    }
+
+    /// Total-supply accounting: value issued, redeemed, and outstanding (SPEC §3.2).
+    pub fn supply(&self) -> SupplyResponse {
+        let issued: u64 = self.issued.iter().map(|e| *e.value()).sum();
+        let redeemed: u64 = self.redeemed.iter().map(|e| *e.value()).sum();
+
+        let mut per_denom: BTreeMap<u64, u64> = BTreeMap::new();
+        for e in self.issued.iter() {
+            per_denom.insert(*e.key(), *e.value());
+        }
+        for e in self.redeemed.iter() {
+            let entry = per_denom.entry(*e.key()).or_insert(0);
+            *entry = entry.saturating_sub(*e.value());
+        }
+
+        SupplyResponse {
+            issued,
+            redeemed,
+            outstanding: issued.saturating_sub(redeemed),
+            per_denom,
+        }
     }
 }
 
@@ -361,6 +399,46 @@ mod tests {
             ));
             let _c = unblind_signature(&sig.c_prime, &blinds[i], &pubkey).unwrap();
         }
+    }
+
+    #[test]
+    fn supply_tracks_issued_redeemed_outstanding() {
+        use crate::api::{BlindedOutput, MeltRequest, MintRequest};
+        use crate::blind::{blind_message, unblind_signature};
+
+        let mint = Mint::new(&[1, 2, 4, 8]);
+
+        // Issue a value-4 note through the mint API.
+        let secret = b"s".to_vec();
+        let y = hash_to_curve(&secret);
+        let bm = blind_message(&y).unwrap();
+        let resp = mint
+            .process_mint(MintRequest {
+                outputs: vec![BlindedOutput {
+                    value: 4,
+                    blinded_point: bm.blinded_point,
+                }],
+            })
+            .unwrap();
+        let pubkey = mint.keys.get(&4).unwrap().pubkey;
+        let c = unblind_signature(&resp.signatures[0].c_prime, &bm.blind_factor, &pubkey).unwrap();
+        let note = Note {
+            value: 4,
+            secret,
+            y,
+            c,
+        };
+
+        let s = mint.supply();
+        assert_eq!((s.issued, s.redeemed, s.outstanding), (4, 0, 4));
+        assert_eq!(s.per_denom.get(&4), Some(&4));
+
+        // Redeem it.
+        mint.process_melt(MeltRequest { inputs: vec![note] })
+            .unwrap();
+        let s = mint.supply();
+        assert_eq!((s.issued, s.redeemed, s.outstanding), (4, 4, 0));
+        assert_eq!(s.per_denom.get(&4), Some(&0));
     }
 
     #[test]

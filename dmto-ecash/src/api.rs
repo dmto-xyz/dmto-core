@@ -1,16 +1,40 @@
 //! Wire types for the mint's HTTP API, shared by the server and client.
 //!
 //! Endpoints (Phase 1):
+//! - `GET  /v1/info`   → [`MintInfo`]
 //! - `GET  /v1/keyset` → [`crate::keyset::PublicKeyset`]
+//! - `GET  /v1/supply` → [`SupplyResponse`]
 //! - `POST /v1/mint`   → [`MintRequest`] / [`SignatureResponse`]
 //! - `POST /v1/swap`   → [`SwapRequest`] / [`SignatureResponse`]
 //! - `POST /v1/melt`   → [`MeltRequest`] / [`MeltResponse`]
+
+use std::collections::BTreeMap;
 
 use secp256k1::PublicKey;
 use serde::{Deserialize, Serialize};
 
 use crate::blind::DLEQ;
+use crate::issuer::IssuerId;
+use crate::keyset::PublicKeyset;
 use crate::types::Note;
+
+/// Identity and keyset a wallet needs to trust and use an issuer.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct MintInfo {
+    pub issuer: IssuerId,
+    pub keyset: PublicKeyset,
+}
+
+/// Total-supply accounting for the mint's keyset (SPEC §3.2). `outstanding` is
+/// `issued − redeemed`, per denomination and in total.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SupplyResponse {
+    pub issued: u64,
+    pub redeemed: u64,
+    pub outstanding: u64,
+    /// Outstanding value per denomination.
+    pub per_denom: BTreeMap<u64, u64>,
+}
 
 /// A single blinded output the wallet asks the mint to sign: a denomination and
 /// the blinded point `B' = Y + r·G`.

@@ -16,7 +16,7 @@ economy** where value can be issued, exchanged, and spent without a central issu
 | Crate         | Status      | What it is |
 | ------------- | ----------- | ---------- |
 | `dmto-ecash`  | library + demo | Cashu-style blind Diffie–Hellman (BDHKE) ecash: mint, wallet, blind signatures, DLEQ proofs, double-spend prevention. Typed `Error`/`Result` API with unit tests. |
-| `dmto-relay`  | server (early) | axum HTTP server hosting the mint API (`/v1/mint`, `/v1/swap`, `/v1/melt`, `/v1/keyset`), with its keyset and spent-secret set persisted in Postgres (sqlx). Message routing comes in later phases. |
+| `dmto-relay`  | server (early) | axum HTTP server hosting the mint API (`/v1/info`, `/v1/keyset`, `/v1/supply`, `/v1/mint`, `/v1/swap`, `/v1/melt`), with issuer identity, keyset, spent-secret set, and supply totals persisted in Postgres (sqlx). Message routing comes in later phases. |
 | `dmto-cli`    | wallet client | Blocking HTTP client for the relay's mint: fetch keyset, mint (blind → sign → verify DLEQ → unblind), store notes on disk, show balance, melt. |
 
 ## What `dmto-ecash` does today
@@ -33,8 +33,11 @@ BDHKE scheme:
   (burn input notes, blind-sign new outputs, enforcing value conservation).
 - **`keyset.rs`** — a `KeysetId` derived deterministically from a mint's public keys, and
   the `PublicKeyset` a wallet fetches and verifies against.
-- **`api.rs`** — serde wire types for the mint's HTTP API (`mint` / `swap` / `melt` /
-  keyset), and `Mint::process_*` handlers bridging them to the core operations.
+- **`issuer.rs`** — `IssuerId`, an issuer's public-key identity (what trust and exchange
+  key off of).
+- **`api.rs`** — serde wire types for the mint's HTTP API (`info` / `keyset` / `supply` /
+  `mint` / `swap` / `melt`), and `Mint::process_*` / `supply` handlers bridging them to the
+  core operations.
 - **`wallet.rs`** — a `Wallet` that mints notes and spends them.
 - **`types.rs`** — the `Note { value, secret, y, c }` type.
 - **`error.rs`** — the crate `Error`/`Result`; library paths return errors instead of panicking.
@@ -67,9 +70,11 @@ curl http://127.0.0.1:3000/v1/keyset
 ```
 
 Override the bind address with `DMTO_RELAY_ADDR=127.0.0.1:3999`. The server exposes the
-mint API (`/v1/mint`, `/v1/swap`, `/v1/melt`, `/v1/keyset`). Migrations run automatically
-on startup. Both the **mint keyset and the spent-secret set are persisted in Postgres**,
-so the keyset id and double-spend protection survive restarts. Message routing comes next.
+mint API: `GET /v1/info` (issuer id + keyset), `GET /v1/keyset`, `GET /v1/supply`
+(issued / redeemed / outstanding), and `POST /v1/mint`, `/v1/swap`, `/v1/melt`. Migrations
+run automatically on startup. The **issuer keypair, mint keyset, spent-secret set, and
+issuance totals are persisted in Postgres**, so issuer identity, keyset id, double-spend
+protection, and supply figures survive restarts. Message routing comes next.
 
 The Postgres-backed double-spend test is ignored by default (it needs a database):
 

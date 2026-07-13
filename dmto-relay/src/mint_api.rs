@@ -16,16 +16,17 @@ use axum::{
 use dmto_ecash::{
     Error,
     api::{
-        ApiError, BlindSignature, BlindedOutput, MeltRequest, MeltResponse, MintRequest,
-        SignatureResponse, SwapRequest,
+        ApiError, BlindSignature, BlindedOutput, MeltRequest, MeltResponse, MintInfo, MintRequest,
+        SignatureResponse, SupplyResponse, SwapRequest,
     },
     blind::blind_sign,
+    issuer::IssuerId,
     keyset::{KeysetId, PublicKeyset},
     mint::MintKey,
     types::Note,
 };
 use secp256k1::PublicKey;
-use sqlx::PgPool;
+use sqlx::{PgPool, Row};
 
 /// Error returned by mint operations, convertible to an HTTP response.
 #[derive(Debug)]
@@ -74,6 +75,7 @@ impl IntoResponse for AppError {
 /// handler futures are `Send`, as axum requires for generic state.
 pub trait MintApi: Send + Sync + 'static {
     fn public_keyset(&self) -> PublicKeyset;
+    fn mint_info(&self) -> MintInfo;
     fn process_mint(
         &self,
         req: MintRequest,
@@ -86,28 +88,53 @@ pub trait MintApi: Send + Sync + 'static {
         &self,
         req: MeltRequest,
     ) -> impl Future<Output = Result<MeltResponse, AppError>> + Send;
+    fn supply(&self) -> impl Future<Output = Result<SupplyResponse, AppError>> + Send;
 }
 
 /// In-memory mint (spent set lives in the process). Used in tests.
 #[cfg(test)]
-pub struct InMemoryMint(pub dmto_ecash::mint::Mint);
+pub struct InMemoryMint {
+    mint: dmto_ecash::mint::Mint,
+    issuer: IssuerId,
+}
+
+#[cfg(test)]
+impl InMemoryMint {
+    pub fn new(mint: dmto_ecash::mint::Mint) -> Self {
+        let secp = secp256k1::Secp256k1::new();
+        let sk = secp256k1::SecretKey::new(&mut secp256k1::rand::thread_rng());
+        let issuer = IssuerId::new(PublicKey::from_secret_key(&secp, &sk));
+        Self { mint, issuer }
+    }
+}
 
 #[cfg(test)]
 impl MintApi for InMemoryMint {
     fn public_keyset(&self) -> PublicKeyset {
-        self.0.public_keyset()
+        self.mint.public_keyset()
+    }
+
+    fn mint_info(&self) -> MintInfo {
+        MintInfo {
+            issuer: self.issuer,
+            keyset: self.mint.public_keyset(),
+        }
     }
 
     async fn process_mint(&self, req: MintRequest) -> Result<SignatureResponse, AppError> {
-        Ok(self.0.process_mint(req)?)
+        Ok(self.mint.process_mint(req)?)
     }
 
     async fn process_swap(&self, req: SwapRequest) -> Result<SignatureResponse, AppError> {
-        Ok(self.0.process_swap(req)?)
+        Ok(self.mint.process_swap(req)?)
     }
 
     async fn process_melt(&self, req: MeltRequest) -> Result<MeltResponse, AppError> {
-        Ok(self.0.process_melt(req)?)
+        Ok(self.mint.process_melt(req)?)
+    }
+
+    async fn supply(&self) -> Result<SupplyResponse, AppError> {
+        Ok(self.mint.supply())
     }
 }
 
@@ -116,14 +143,20 @@ pub struct PgMint {
     pool: PgPool,
     keys: HashMap<u64, MintKey>,
     id: KeysetId,
+    issuer: IssuerId,
 }
 
 impl PgMint {
-    pub fn new(pool: PgPool, mint_keys: Vec<MintKey>) -> Self {
+    pub fn new(pool: PgPool, mint_keys: Vec<MintKey>, issuer: IssuerId) -> Self {
         let keys: HashMap<u64, MintKey> = mint_keys.into_iter().map(|k| (k.value, k)).collect();
         let pubkeys = keys.iter().map(|(&v, k)| (v, k.pubkey)).collect();
         let id = KeysetId::derive(&pubkeys);
-        Self { pool, keys, id }
+        Self {
+            pool,
+            keys,
+            id,
+            issuer,
+        }
     }
 
     /// Blind-sign each output, failing if a denomination is unknown.
@@ -144,11 +177,11 @@ impl PgMint {
         Ok(SignatureResponse { signatures })
     }
 
-    /// Verify and spend all `notes` in a single transaction. Either all are
-    /// recorded as spent or none are (on error the transaction rolls back).
-    async fn spend_all(&self, notes: &[Note]) -> Result<(), AppError> {
+    /// Spend `inputs` and record `issued` outputs in a single transaction: either
+    /// all changes commit or none do (on error the transaction rolls back).
+    async fn apply(&self, inputs: &[Note], issued: &[BlindedOutput]) -> Result<(), AppError> {
         let mut tx = self.pool.begin().await?;
-        for note in notes {
+        for note in inputs {
             let key = self
                 .keys
                 .get(&note.value)
@@ -166,6 +199,16 @@ impl PgMint {
                 Err(e) if is_unique_violation(&e) => return Err(Error::DoubleSpend.into()),
                 Err(e) => return Err(e.into()),
             }
+        }
+        for out in issued {
+            sqlx::query(
+                "INSERT INTO issued_total (value, total) VALUES ($1, $2)
+                 ON CONFLICT (value) DO UPDATE SET total = issued_total.total + EXCLUDED.total",
+            )
+            .bind(out.value as i64)
+            .bind(out.value as i64)
+            .execute(&mut *tx)
+            .await?;
         }
         tx.commit().await?;
         Ok(())
@@ -188,7 +231,16 @@ impl MintApi for PgMint {
         PublicKeyset { id: self.id, keys }
     }
 
+    fn mint_info(&self) -> MintInfo {
+        MintInfo {
+            issuer: self.issuer,
+            keyset: self.public_keyset(),
+        }
+    }
+
     async fn process_mint(&self, req: MintRequest) -> Result<SignatureResponse, AppError> {
+        self.require_known_denoms(&req.outputs)?;
+        self.apply(&[], &req.outputs).await?;
         self.sign_outputs(&req.outputs)
     }
 
@@ -204,14 +256,49 @@ impl MintApi for PgMint {
         }
         // Validate outputs before spending, so a bad request can't burn inputs.
         self.require_known_denoms(&req.outputs)?;
-        self.spend_all(&req.inputs).await?;
+        self.apply(&req.inputs, &req.outputs).await?;
         self.sign_outputs(&req.outputs)
     }
 
     async fn process_melt(&self, req: MeltRequest) -> Result<MeltResponse, AppError> {
         let melted = req.inputs.iter().map(|n| n.value).sum();
-        self.spend_all(&req.inputs).await?;
+        self.apply(&req.inputs, &[]).await?;
         Ok(MeltResponse { melted })
+    }
+
+    async fn supply(&self) -> Result<SupplyResponse, AppError> {
+        let issued_rows = sqlx::query("SELECT value, total FROM issued_total")
+            .fetch_all(&self.pool)
+            .await?;
+        let redeemed_rows = sqlx::query(
+            "SELECT value, SUM(value)::BIGINT AS redeemed FROM spent_secret GROUP BY value",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut per_denom: std::collections::BTreeMap<u64, u64> = std::collections::BTreeMap::new();
+        let mut issued = 0u64;
+        for row in issued_rows {
+            let value: i64 = row.get("value");
+            let total: i64 = row.get("total");
+            per_denom.insert(value as u64, total as u64);
+            issued += total as u64;
+        }
+        let mut redeemed = 0u64;
+        for row in redeemed_rows {
+            let value: i64 = row.get("value");
+            let r: i64 = row.get("redeemed");
+            redeemed += r as u64;
+            let entry = per_denom.entry(value as u64).or_insert(0);
+            *entry = entry.saturating_sub(r as u64);
+        }
+
+        Ok(SupplyResponse {
+            issued,
+            redeemed,
+            outstanding: issued.saturating_sub(redeemed),
+            per_denom,
+        })
     }
 }
 

@@ -31,7 +31,7 @@ wire format — the substrate every later phase builds on.
 paths; notes and proofs round-trip through serde. **Met.**
 **SPEC:** §2.
 
-## Phase 1 — Ecash as a service
+## Phase 1 — Ecash as a service ✅
 
 **Goal:** run a mint as a networked service with persistence and a real client wallet.
 
@@ -43,13 +43,15 @@ paths; notes and proofs round-trip through serde. **Met.**
 - [x] Persist mint state in **Postgres via sqlx**: keyset (signing keys) so the keyset id
       is stable across restarts, and the spent-secret set (atomic per-request transaction,
       unique-violation → double-spend) so double-spend protection survives restarts.
-- [ ] **Issuer identity:** each mint has a stable issuer keypair/id, published with its keysets.
-- [ ] **Total-supply accounting** per keyset, published and verifiable.
+- [x] **Issuer identity:** stable issuer keypair persisted in Postgres; issuer id published
+      at `GET /v1/info` alongside the keyset.
+- [x] **Total-supply accounting** per keyset (issued / redeemed / outstanding, per denom),
+      published at `GET /v1/supply`.
 
 **Stack:** Postgres + `sqlx`; HTTP by default, WebSocket where real-time is needed (see Decisions).
 
 **Exit criteria:** a wallet on one process mints, swaps, and spends against a mint on
-another process, across restarts; total supply is queryable.
+another process, across restarts; total supply is queryable. **Met.**
 **SPEC:** §2, §3.1, §3.2.
 
 ## Phase 2 — Multi-issuer economy
