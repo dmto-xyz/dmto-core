@@ -39,7 +39,9 @@ paths; notes and proofs round-trip through serde. **Met.**
 - [x] Mint server binary (`dmto-relay`): **HTTP** (axum) endpoints for mint / swap / melt /
       keyset. _(WebSocket for real-time delivery arrives with messaging in Phase 3.)_
 - [ ] Wallet client that talks to a remote mint and stores notes on disk.
-- [ ] Persist mint state (issued keysets, spent-secret set) in **Postgres via sqlx**.
+- [~] Persist mint state in **Postgres via sqlx**: keyset (signing keys) persisted so the
+      keyset id is stable across restarts. Spent-secret set is the next slice (needs the
+      DB-backed, async spend path).
 - [ ] **Issuer identity:** each mint has a stable issuer keypair/id, published with its keysets.
 - [ ] **Total-supply accounting** per keyset, published and verifiable.
 

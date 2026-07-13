@@ -2,13 +2,15 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use secp256k1::PublicKey;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sha2::{Digest, Sha256};
 
 /// Stable identifier for a mint's set of denomination keys, derived
 /// deterministically from the public keys it contains. Two mints with the same
 /// public keys share an id; any change to the keys changes the id.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+///
+/// Serialized as a 64-character lowercase hex string.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct KeysetId([u8; 32]);
 
 impl KeysetId {
@@ -34,6 +36,32 @@ impl KeysetId {
             fmt::write(&mut s, format_args!("{b:02x}")).expect("writing to String cannot fail");
         }
         s
+    }
+
+    /// Parse a 64-character hex string back into a `KeysetId`.
+    pub fn from_hex(s: &str) -> Result<Self, String> {
+        if s.len() != 64 {
+            return Err(format!("expected 64 hex chars, got {}", s.len()));
+        }
+        let mut bytes = [0u8; 32];
+        for (i, byte) in bytes.iter_mut().enumerate() {
+            *byte = u8::from_str_radix(&s[i * 2..i * 2 + 2], 16)
+                .map_err(|e| format!("invalid hex: {e}"))?;
+        }
+        Ok(Self(bytes))
+    }
+}
+
+impl Serialize for KeysetId {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&self.to_hex())
+    }
+}
+
+impl<'de> Deserialize<'de> for KeysetId {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(d)?;
+        Self::from_hex(&s).map_err(serde::de::Error::custom)
     }
 }
 
@@ -81,6 +109,17 @@ mod tests {
     fn hex_is_64_chars() {
         let mint = Mint::new(&[1]);
         assert_eq!(mint.id().to_hex().len(), 64);
+    }
+
+    #[test]
+    fn serializes_as_hex_string_and_roundtrips() {
+        let mint = Mint::new(&[1, 2, 4]);
+        let id = mint.id();
+        let json = serde_json::to_string(&id).unwrap();
+        // A JSON string, not an array.
+        assert_eq!(json, format!("\"{}\"", id.to_hex()));
+        let id2: KeysetId = serde_json::from_str(&json).unwrap();
+        assert_eq!(id, id2);
     }
 
     #[test]

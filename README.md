@@ -16,7 +16,7 @@ economy** where value can be issued, exchanged, and spent without a central issu
 | Crate         | Status      | What it is |
 | ------------- | ----------- | ---------- |
 | `dmto-ecash`  | library + demo | Cashu-style blind Diffie–Hellman (BDHKE) ecash: mint, wallet, blind signatures, DLEQ proofs, double-spend prevention. Typed `Error`/`Result` API with unit tests. |
-| `dmto-relay`  | server (early) | axum HTTP server hosting the mint API (`/v1/mint`, `/v1/swap`, `/v1/melt`, `/v1/keyset`). Message routing comes in later phases. |
+| `dmto-relay`  | server (early) | axum HTTP server hosting the mint API (`/v1/mint`, `/v1/swap`, `/v1/melt`, `/v1/keyset`), with its keyset persisted in Postgres (sqlx). Message routing comes in later phases. |
 | `cli`         | stub        | Placeholder binary (`Hello, world!`) — intended entry point for a node/wallet CLI. |
 
 ## What `dmto-ecash` does today
@@ -57,14 +57,20 @@ DLEQ verification), Bob spends, and a double-spend attempt is rejected.
 
 ## Run the relay server
 
+The relay needs PostgreSQL. Create a database and point `DATABASE_URL` at it (it defaults
+to `postgres://$USER@localhost/dmto`):
+
 ```sh
-cargo run -p dmto-relay          # listens on 0.0.0.0:3000
+createdb dmto
+cargo run -p dmto-relay          # migrates, then listens on 0.0.0.0:3000
 curl http://127.0.0.1:3000/v1/keyset
 ```
 
-Override the bind address with `DMTO_RELAY_ADDR=127.0.0.1:3999`. The server currently
-exposes the mint API (`/v1/mint`, `/v1/swap`, `/v1/melt`, `/v1/keyset`) with an
-in-memory mint; Postgres persistence and message routing come next.
+Override the bind address with `DMTO_RELAY_ADDR=127.0.0.1:3999`. The server exposes the
+mint API (`/v1/mint`, `/v1/swap`, `/v1/melt`, `/v1/keyset`). Migrations run automatically
+on startup. The **mint keyset is persisted in Postgres**, so the keyset id is stable
+across restarts; the spent-secret set moves to Postgres in the next slice, and message
+routing after that.
 
 ## Where this is going
 

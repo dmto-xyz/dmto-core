@@ -3,6 +3,8 @@
 //! Phase 1 hosts the mint's HTTP API (issue / swap / melt / keyset). Later phases
 //! add message routing and store-and-forward on top of the same server.
 
+mod store;
+
 use std::sync::Arc;
 
 use axum::{
@@ -18,6 +20,7 @@ use dmto_ecash::{
     keyset::PublicKeyset,
     mint::Mint,
 };
+use sqlx::postgres::PgPoolOptions;
 
 type SharedMint = Arc<Mint>;
 
@@ -25,17 +28,23 @@ type SharedMint = Arc<Mint>;
 const DENOMINATIONS: &[u64] = &[1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024];
 
 #[tokio::main]
-async fn main() {
-    let mint = Arc::new(Mint::new(DENOMINATIONS));
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let db_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
+        let user = std::env::var("USER").unwrap_or_else(|_| "postgres".to_string());
+        format!("postgres://{user}@localhost/dmto")
+    });
+    let pool = PgPoolOptions::new().connect(&db_url).await?;
+    sqlx::migrate!("./migrations").run(&pool).await?;
+
+    let mint = Arc::new(store::load_or_create_mint(&pool, DENOMINATIONS).await?);
     println!("dmto-relay mint keyset: {}", mint.id());
 
     let addr = std::env::var("DMTO_RELAY_ADDR").unwrap_or_else(|_| "0.0.0.0:3000".to_string());
-    let listener = tokio::net::TcpListener::bind(&addr)
-        .await
-        .expect("bind listener");
+    let listener = tokio::net::TcpListener::bind(&addr).await?;
     println!("dmto-relay listening on {addr}");
 
-    axum::serve(listener, app(mint)).await.expect("serve");
+    axum::serve(listener, app(mint)).await?;
+    Ok(())
 }
 
 /// Build the router. Separated from `main` so tests can drive it directly.

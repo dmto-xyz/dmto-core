@@ -23,10 +23,13 @@ pub struct MintKey {
 
 impl MintKey {
     pub fn new(value: u64) -> Self {
-        let secp = Secp256k1::new();
         let privkey = SecretKey::new(&mut rand::thread_rng());
-        let pubkey = PublicKey::from_secret_key(&secp, &privkey);
+        Self::from_privkey(value, privkey)
+    }
 
+    /// Reconstruct a key from a persisted private key (e.g. loaded from a database).
+    pub fn from_privkey(value: u64, privkey: SecretKey) -> Self {
+        let pubkey = PublicKey::from_secret_key(&Secp256k1::new(), &privkey);
         Self {
             value,
             privkey,
@@ -43,7 +46,14 @@ pub struct Mint {
 
 impl Mint {
     pub fn new(denoms: &[u64]) -> Self {
-        let keys: HashMap<u64, MintKey> = denoms.iter().map(|&v| (v, MintKey::new(v))).collect();
+        let keys: Vec<MintKey> = denoms.iter().map(|&v| MintKey::new(v)).collect();
+        Self::from_mint_keys(keys)
+    }
+
+    /// Build a mint from an existing set of keys (e.g. loaded from a database), so
+    /// the keyset id is stable across restarts.
+    pub fn from_mint_keys(mint_keys: Vec<MintKey>) -> Self {
+        let keys: HashMap<u64, MintKey> = mint_keys.into_iter().map(|k| (k.value, k)).collect();
         let id = KeysetId::derive(&Self::pubkey_map(&keys));
         Self {
             id,
@@ -183,6 +193,19 @@ mod tests {
     use crate::blind::blind_message;
     use crate::hash::hash_to_curve;
     use crate::wallet::Wallet;
+
+    #[test]
+    fn from_mint_keys_reproduces_keyset_id() {
+        let original = Mint::new(&[1, 2, 4]);
+        // Rebuild from the same private keys, as a restart would.
+        let keys: Vec<MintKey> = original
+            .keys
+            .values()
+            .map(|k| MintKey::from_privkey(k.value, k.privkey))
+            .collect();
+        let rebuilt = Mint::from_mint_keys(keys);
+        assert_eq!(original.id(), rebuilt.id());
+    }
 
     #[test]
     fn mint_and_verify() {
