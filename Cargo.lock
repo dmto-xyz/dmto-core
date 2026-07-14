@@ -263,6 +263,7 @@ dependencies = [
  "dmto-ecash",
  "rand",
  "reqwest",
+ "secp256k1",
  "serde",
  "serde_json",
 ]

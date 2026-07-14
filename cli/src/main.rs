@@ -1,11 +1,15 @@
 //! dmto-cli: a wallet client for the relay's mint.
 //!
 //! Commands:
+//!   info              show the mint's issuer id and keyset
 //!   keyset            fetch and show the mint's keyset
-//!   mint <amount>     mint ecash totaling <amount> and store it
-//!   balance           show the stored balance
-//!   list              list stored notes
-//!   melt <amount>     redeem notes totaling <amount> back to the mint
+//!   mint <amount>     mint ecash totaling <amount> and store it under its issuer
+//!   balance           show the stored balance, per issuer
+//!   list              list stored notes, per issuer
+//!   melt <amount>     redeem notes totaling <amount> back to the current issuer
+//!
+//! One wallet holds ecash from multiple issuers; the mint at DMTO_RELAY_URL
+//! determines which issuer a command acts on.
 //!
 //! Config via env: DMTO_RELAY_URL (default http://127.0.0.1:3000),
 //! DMTO_WALLET (default ./wallet.json).
@@ -40,67 +44,109 @@ fn run() -> Result<(), Box<dyn Error>> {
     let url = std::env::var("DMTO_RELAY_URL").unwrap_or_else(|_| "http://127.0.0.1:3000".into());
     let wallet_path =
         PathBuf::from(std::env::var("DMTO_WALLET").unwrap_or_else(|_| "wallet.json".into()));
-    let client = MintClient::new(url);
+    let client = MintClient::new(url.clone());
 
     match command.as_str() {
+        "info" => {
+            let info = client.info()?;
+            println!("issuer: {}", info.issuer);
+            print_keyset(&info.keyset);
+        }
         "keyset" => {
             let ks = client.keyset()?;
             print_keyset(&ks);
         }
         "mint" => {
             let amount = parse_amount(args.next())?;
-            let ks = client.keyset()?;
-            let denoms: Vec<u64> = ks.keys.keys().copied().collect();
+            let info = client.info()?;
+            let denoms: Vec<u64> = info.keyset.keys.keys().copied().collect();
             let split = split_amount(amount, &denoms)
                 .ok_or("amount cannot be represented with the mint's denominations")?;
 
-            let notes = mint_notes(&client, &ks, &split)?;
+            let notes = mint_notes(&client, &info.keyset, &split)?;
             let mut wallet = Wallet::load(&wallet_path)?;
-            wallet.notes.extend(notes);
+            let idx = wallet.upsert_account(&info, &url);
+            wallet.accounts[idx].notes.extend(notes);
             wallet.save(&wallet_path)?;
-            println!("minted {amount}; balance {}", wallet.balance());
+            println!(
+                "minted {amount} from {}; balance {}",
+                info.issuer,
+                wallet.accounts[idx].balance()
+            );
         }
         "balance" => {
             let wallet = Wallet::load(&wallet_path)?;
-            println!("{}", wallet.balance());
+            for a in &wallet.accounts {
+                println!(
+                    "{}  {}  {}",
+                    short(&a.issuer.to_string()),
+                    a.url,
+                    a.balance()
+                );
+            }
+            println!("total: {}", wallet.balance());
         }
         "list" => {
             let wallet = Wallet::load(&wallet_path)?;
-            for n in &wallet.notes {
-                println!("{}", n.value);
+            for a in &wallet.accounts {
+                let values: Vec<u64> = a.notes.iter().map(|n| n.value).collect();
+                println!(
+                    "{} ({}): {values:?} = {}",
+                    short(&a.issuer.to_string()),
+                    a.url,
+                    a.balance()
+                );
             }
             println!("total: {}", wallet.balance());
         }
         "melt" => {
             let amount = parse_amount(args.next())?;
+            let info = client.info()?;
             let mut wallet = Wallet::load(&wallet_path)?;
-            let values: Vec<u64> = wallet.notes.iter().map(|n| n.value).collect();
+            let idx = wallet
+                .account_index(&info.issuer)
+                .ok_or("no notes held for this issuer")?;
+
+            let values: Vec<u64> = wallet.accounts[idx].notes.iter().map(|n| n.value).collect();
             let chosen = select_exact(&values, amount).ok_or_else(|| {
                 format!(
                     "cannot select notes totaling {amount} (balance {})",
-                    wallet.balance()
+                    wallet.accounts[idx].balance()
                 )
             })?;
 
-            let inputs: Vec<Note> = chosen.iter().map(|&i| wallet.notes[i].clone()).collect();
+            let inputs: Vec<Note> = chosen
+                .iter()
+                .map(|&i| wallet.accounts[idx].notes[i].clone())
+                .collect();
             let resp = client.melt(&MeltRequest { inputs })?;
 
             // Remove the melted notes (highest index first to keep indices valid).
             let mut chosen = chosen;
             chosen.sort_unstable_by(|a, b| b.cmp(a));
             for i in chosen {
-                wallet.notes.remove(i);
+                wallet.accounts[idx].notes.remove(i);
             }
             wallet.save(&wallet_path)?;
-            println!("melted {}; balance {}", resp.melted, wallet.balance());
+            println!(
+                "melted {} from {}; balance {}",
+                resp.melted,
+                info.issuer,
+                wallet.accounts[idx].balance()
+            );
         }
         other => {
             eprintln!("unknown command: {other:?}");
-            eprintln!("usage: dmto-cli <keyset|mint <amount>|balance|list|melt <amount>>");
+            eprintln!("usage: dmto-cli <info|keyset|mint <amount>|balance|list|melt <amount>>");
             std::process::exit(2);
         }
     }
     Ok(())
+}
+
+/// First 16 characters of a hex id, for compact display.
+fn short(id: &str) -> &str {
+    &id[..id.len().min(16)]
 }
 
 fn parse_amount(arg: Option<String>) -> Result<u64, Box<dyn Error>> {

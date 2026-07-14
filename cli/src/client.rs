@@ -2,7 +2,9 @@
 
 use std::error::Error;
 
-use dmto_ecash::api::{ApiError, MeltRequest, MeltResponse, MintRequest, SignatureResponse};
+use dmto_ecash::api::{
+    ApiError, MeltRequest, MeltResponse, MintInfo, MintRequest, SignatureResponse,
+};
 use dmto_ecash::keyset::PublicKeyset;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -18,6 +20,11 @@ impl MintClient {
             base: base.into(),
             http: reqwest::blocking::Client::new(),
         }
+    }
+
+    pub fn info(&self) -> Result<MintInfo, Box<dyn Error>> {
+        let resp = self.http.get(self.url("/v1/info")).send()?;
+        Self::read(resp)
     }
 
     pub fn keyset(&self) -> Result<PublicKeyset, Box<dyn Error>> {

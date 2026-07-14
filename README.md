@@ -88,14 +88,16 @@ With a relay running, drive it with `dmto-cli` (config via `DMTO_RELAY_URL`, def
 `http://127.0.0.1:3000`, and `DMTO_WALLET`, default `./wallet.json`):
 
 ```sh
-cargo run -p dmto-cli -- keyset       # show the mint's keyset and denominations
-cargo run -p dmto-cli -- mint 6       # mint 6 units, store notes on disk
-cargo run -p dmto-cli -- balance      # -> 6
-cargo run -p dmto-cli -- melt 6       # redeem notes back to the mint
+cargo run -p dmto-cli -- info         # show the mint's issuer id and keyset
+cargo run -p dmto-cli -- mint 6       # mint 6 units, stored under this issuer
+cargo run -p dmto-cli -- balance      # per-issuer balances + total
+cargo run -p dmto-cli -- melt 6       # redeem notes back to the current issuer
 ```
 
 The client blinds each note, verifies the mint's DLEQ proof before accepting a signature,
-and persists notes as JSON.
+and persists notes as JSON. One wallet holds ecash from **multiple issuers** at once — it
+groups notes into per-issuer accounts, and each command acts on the issuer at
+`DMTO_RELAY_URL`.
 
 ## Where this is going
 
