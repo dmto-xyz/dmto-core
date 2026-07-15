@@ -3,13 +3,17 @@
 //! Commands:
 //!   info              show the mint's issuer id and keyset
 //!   keyset            fetch and show the mint's keyset
-//!   mint <amount>     mint ecash totaling <amount> and store it under its issuer
+//!   trust [limit]     trust the current issuer (optional balance cap)
+//!   untrust           revoke trust in the current issuer
+//!   trusted           list trusted issuers
+//!   mint <amount>     mint ecash totaling <amount> from a trusted issuer
 //!   balance           show the stored balance, per issuer
 //!   list              list stored notes, per issuer
 //!   melt <amount>     redeem notes totaling <amount> back to the current issuer
 //!
 //! One wallet holds ecash from multiple issuers; the mint at DMTO_RELAY_URL
-//! determines which issuer a command acts on.
+//! determines which issuer a command acts on. Minting requires the issuer to be
+//! trusted (SPEC §3.4).
 //!
 //! Config via env: DMTO_RELAY_URL (default http://127.0.0.1:3000),
 //! DMTO_WALLET (default ./wallet.json).
@@ -56,15 +60,65 @@ fn run() -> Result<(), Box<dyn Error>> {
             let ks = client.keyset()?;
             print_keyset(&ks);
         }
+        "trust" => {
+            let limit = args.next().map(|s| s.parse::<u64>()).transpose()?;
+            let info = client.info()?;
+            let mut wallet = Wallet::load(&wallet_path)?;
+            wallet.set_trust(info.issuer, limit);
+            wallet.save(&wallet_path)?;
+            match limit {
+                Some(l) => println!("trusting {} (limit {l})", info.issuer),
+                None => println!("trusting {} (no limit)", info.issuer),
+            }
+        }
+        "untrust" => {
+            let info = client.info()?;
+            let mut wallet = Wallet::load(&wallet_path)?;
+            let revoked = wallet.revoke_trust(&info.issuer);
+            wallet.save(&wallet_path)?;
+            if revoked {
+                println!("revoked trust in {}", info.issuer);
+            } else {
+                println!("{} was not trusted", info.issuer);
+            }
+        }
+        "trusted" => {
+            let wallet = Wallet::load(&wallet_path)?;
+            for t in &wallet.trusted {
+                match t.limit {
+                    Some(l) => println!("{}  limit {l}", t.issuer),
+                    None => println!("{}  no limit", t.issuer),
+                }
+            }
+        }
         "mint" => {
             let amount = parse_amount(args.next())?;
             let info = client.info()?;
+            let mut wallet = Wallet::load(&wallet_path)?;
+
+            // Trust gate: only mint from trusted issuers, within their limit.
+            let policy = wallet
+                .trust(&info.issuer)
+                .cloned()
+                .ok_or("issuer not trusted; run `dmto-cli trust` first")?;
+            let current = wallet
+                .account_index(&info.issuer)
+                .map(|i| wallet.accounts[i].balance())
+                .unwrap_or(0);
+            if let Some(limit) = policy.limit
+                && current + amount > limit
+            {
+                return Err(format!(
+                    "would exceed trust limit {limit} (holding {current}, minting {amount})"
+                )
+                .into());
+            }
+
             let denoms: Vec<u64> = info.keyset.keys.keys().copied().collect();
             let split = split_amount(amount, &denoms)
                 .ok_or("amount cannot be represented with the mint's denominations")?;
 
             let notes = mint_notes(&client, &info.keyset, &split)?;
-            let mut wallet = Wallet::load(&wallet_path)?;
             let idx = wallet.upsert_account(&info, &url);
             wallet.accounts[idx].notes.extend(notes);
             wallet.save(&wallet_path)?;
@@ -137,7 +191,10 @@ fn run() -> Result<(), Box<dyn Error>> {
         }
         other => {
             eprintln!("unknown command: {other:?}");
-            eprintln!("usage: dmto-cli <info|keyset|mint <amount>|balance|list|melt <amount>>");
+            eprintln!(
+                "usage: dmto-cli <info|keyset|trust [limit]|untrust|trusted|\
+                 mint <amount>|balance|list|melt <amount>>"
+            );
             std::process::exit(2);
         }
     }

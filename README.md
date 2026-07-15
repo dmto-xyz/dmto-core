@@ -99,6 +99,14 @@ and persists notes as JSON. One wallet holds ecash from **multiple issuers** at 
 groups notes into per-issuer accounts, and each command acts on the issuer at
 `DMTO_RELAY_URL`.
 
+Minting requires the issuer to be **trusted** — the user decides which issuers to accept:
+
+```sh
+cargo run -p dmto-cli -- trust 100    # trust the current issuer, cap balance at 100
+cargo run -p dmto-cli -- trusted      # list trusted issuers
+cargo run -p dmto-cli -- untrust      # revoke trust in the current issuer
+```
+
 ## Where this is going
 
 See **[SPEC.md](./SPEC.md)** for the target architecture: user-issued ecash with

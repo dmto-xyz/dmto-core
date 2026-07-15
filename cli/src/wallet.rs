@@ -26,9 +26,19 @@ impl Account {
     }
 }
 
+/// A user's decision to accept an issuer's ecash, with an optional balance cap
+/// (SPEC §3.4). Trust is per-user and revocable.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct TrustEntry {
+    pub issuer: IssuerId,
+    pub limit: Option<u64>,
+}
+
 #[derive(Default, Serialize, Deserialize)]
 pub struct Wallet {
     pub accounts: Vec<Account>,
+    #[serde(default)]
+    pub trusted: Vec<TrustEntry>,
 }
 
 impl Wallet {
@@ -53,6 +63,27 @@ impl Wallet {
 
     pub fn account_index(&self, issuer: &IssuerId) -> Option<usize> {
         self.accounts.iter().position(|a| &a.issuer == issuer)
+    }
+
+    /// The trust entry for `issuer`, if the user trusts it.
+    pub fn trust(&self, issuer: &IssuerId) -> Option<&TrustEntry> {
+        self.trusted.iter().find(|t| &t.issuer == issuer)
+    }
+
+    /// Trust `issuer` (or update its limit).
+    pub fn set_trust(&mut self, issuer: IssuerId, limit: Option<u64>) {
+        if let Some(t) = self.trusted.iter_mut().find(|t| t.issuer == issuer) {
+            t.limit = limit;
+        } else {
+            self.trusted.push(TrustEntry { issuer, limit });
+        }
+    }
+
+    /// Revoke trust in `issuer`. Returns whether it was trusted.
+    pub fn revoke_trust(&mut self, issuer: &IssuerId) -> bool {
+        let before = self.trusted.len();
+        self.trusted.retain(|t| &t.issuer != issuer);
+        self.trusted.len() != before
     }
 
     /// Find the account for `info`'s issuer, creating it if new. Returns its index
@@ -159,6 +190,24 @@ mod tests {
     #[test]
     fn select_exact_impossible_returns_none() {
         assert_eq!(select_exact(&[4, 4], 6), None);
+    }
+
+    #[test]
+    fn trust_set_update_and_revoke() {
+        let mut w = Wallet::default();
+        let a = fake_info(1);
+
+        assert!(w.trust(&a.issuer).is_none());
+        w.set_trust(a.issuer, Some(10));
+        assert_eq!(w.trust(&a.issuer).unwrap().limit, Some(10));
+
+        w.set_trust(a.issuer, Some(20)); // update, not duplicate
+        assert_eq!(w.trusted.len(), 1);
+        assert_eq!(w.trust(&a.issuer).unwrap().limit, Some(20));
+
+        assert!(w.revoke_trust(&a.issuer));
+        assert!(w.trust(&a.issuer).is_none());
+        assert!(!w.revoke_trust(&a.issuer)); // already revoked
     }
 
     #[test]

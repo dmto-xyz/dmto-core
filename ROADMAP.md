@@ -61,7 +61,9 @@ another process, across restarts; total supply is queryable. **Met.**
 - [x] Wallet holds notes from **multiple issuers** simultaneously (`dmto-cli` groups notes
       into per-issuer accounts; `mint`/`melt`/`balance` are scoped by the issuer at
       `DMTO_RELAY_URL`).
-- [ ] **Trust config:** per-user list of accepted issuers with limits/policies; revocable.
+- [x] **Trust config:** per-user list of accepted issuers with optional balance limits;
+      revocable (`trust [limit]` / `untrust` / `trusted`). Minting requires a trusted issuer
+      and stays within its limit.
 - [ ] **Exchange:** swap issuer-A ecash for issuer-B ecash at a posted/negotiated rate.
 - [ ] Exchange/quote endpoint an issuer or server can expose.
 
