@@ -25,6 +25,20 @@ impl IssuerId {
         }
         s
     }
+
+    /// Parse a 66-character compressed-pubkey hex string into an `IssuerId`.
+    pub fn from_hex(s: &str) -> Result<Self, String> {
+        if s.len() != 66 {
+            return Err(format!("expected 66 hex chars, got {}", s.len()));
+        }
+        let mut bytes = [0u8; 33];
+        for (i, byte) in bytes.iter_mut().enumerate() {
+            *byte = u8::from_str_radix(&s[i * 2..i * 2 + 2], 16)
+                .map_err(|e| format!("invalid hex: {e}"))?;
+        }
+        let pk = PublicKey::from_slice(&bytes).map_err(|e| format!("invalid pubkey: {e}"))?;
+        Ok(Self(pk))
+    }
 }
 
 impl fmt::Display for IssuerId {
@@ -55,5 +69,10 @@ mod tests {
         assert_eq!(json, format!("\"{}\"", id.to_hex()));
         let id2: IssuerId = serde_json::from_str(&json).unwrap();
         assert_eq!(id, id2);
+
+        // hex round-trip
+        let id3 = IssuerId::from_hex(&id.to_hex()).unwrap();
+        assert_eq!(id, id3);
+        assert!(IssuerId::from_hex("nothex").is_err());
     }
 }

@@ -1,12 +1,14 @@
 //! Wire types for the mint's HTTP API, shared by the server and client.
 //!
 //! Endpoints (Phase 1):
-//! - `GET  /v1/info`   → [`MintInfo`]
-//! - `GET  /v1/keyset` → [`crate::keyset::PublicKeyset`]
-//! - `GET  /v1/supply` → [`SupplyResponse`]
-//! - `POST /v1/mint`   → [`MintRequest`] / [`SignatureResponse`]
-//! - `POST /v1/swap`   → [`SwapRequest`] / [`SignatureResponse`]
-//! - `POST /v1/melt`   → [`MeltRequest`] / [`MeltResponse`]
+//! - `GET  /v1/info`     → [`MintInfo`]
+//! - `GET  /v1/keyset`   → [`crate::keyset::PublicKeyset`]
+//! - `GET  /v1/supply`   → [`SupplyResponse`]
+//! - `GET  /v1/rates`    → [`RatesResponse`]
+//! - `POST /v1/mint`     → [`MintRequest`] / [`SignatureResponse`]
+//! - `POST /v1/swap`     → [`SwapRequest`] / [`SignatureResponse`]
+//! - `POST /v1/melt`     → [`MeltRequest`] / [`MeltResponse`]
+//! - `POST /v1/exchange` → [`ExchangeRequest`] / [`SignatureResponse`]
 
 use std::collections::BTreeMap;
 
@@ -15,7 +17,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::blind::DLEQ;
 use crate::issuer::IssuerId;
-use crate::keyset::PublicKeyset;
+use crate::keyset::{KeysetId, PublicKeyset};
 use crate::types::Note;
 
 /// Identity and keyset a wallet needs to trust and use an issuer.
@@ -34,6 +36,33 @@ pub struct SupplyResponse {
     pub outstanding: u64,
     /// Outstanding value per denomination.
     pub per_denom: BTreeMap<u64, u64>,
+}
+
+/// A posted exchange rate: output value = input value × `num` / `den`, converting
+/// ecash of keyset `from` into keyset `to` (SPEC §3.3).
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExchangeRate {
+    pub from: KeysetId,
+    pub to: KeysetId,
+    pub num: u64,
+    pub den: u64,
+}
+
+/// The exchange's hosted issuers and its posted rates between them.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct RatesResponse {
+    pub mints: Vec<MintInfo>,
+    pub rates: Vec<ExchangeRate>,
+}
+
+/// Convert `inputs` (keyset `from`) into freshly signed `outputs` (keyset `to`) at
+/// the posted rate. Returns a [`SignatureResponse`] for the `to` outputs.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct ExchangeRequest {
+    pub from: KeysetId,
+    pub to: KeysetId,
+    pub inputs: Vec<Note>,
+    pub outputs: Vec<BlindedOutput>,
 }
 
 /// A single blinded output the wallet asks the mint to sign: a denomination and

@@ -16,7 +16,7 @@ economy** where value can be issued, exchanged, and spent without a central issu
 | Crate         | Status      | What it is |
 | ------------- | ----------- | ---------- |
 | `dmto-ecash`  | library + demo | Cashu-style blind Diffie–Hellman (BDHKE) ecash: mint, wallet, blind signatures, DLEQ proofs, double-spend prevention. Typed `Error`/`Result` API with unit tests. |
-| `dmto-relay`  | server (early) | axum HTTP server hosting the mint API (`/v1/info`, `/v1/keyset`, `/v1/supply`, `/v1/mint`, `/v1/swap`, `/v1/melt`), with issuer identity, keyset, spent-secret set, and supply totals persisted in Postgres (sqlx). Message routing comes in later phases. |
+| `dmto-relay`  | server (early) | axum HTTP server hosting the mint API (`/v1/info`, `/v1/keyset`, `/v1/supply`, `/v1/mint`, `/v1/swap`, `/v1/melt`) plus cross-issuer exchange (`/v1/rates`, `/v1/exchange`), with issuer identity, keysets, spent-secret set, and supply totals persisted in Postgres (sqlx). Message routing comes in later phases. |
 | `dmto-cli`    | wallet client | Blocking HTTP client for the relay's mint: fetch keyset, mint (blind → sign → verify DLEQ → unblind), store notes on disk, show balance, melt. |
 
 ## What `dmto-ecash` does today
@@ -106,6 +106,18 @@ cargo run -p dmto-cli -- trust 100    # trust the current issuer, cap balance at
 cargo run -p dmto-cli -- trusted      # list trusted issuers
 cargo run -p dmto-cli -- untrust      # revoke trust in the current issuer
 ```
+
+A relay can host more than one issuer and **exchange** between them at a posted rate
+(`GET /v1/rates`, `POST /v1/exchange`):
+
+```sh
+cargo run -p dmto-cli -- rates             # hosted issuers + posted rates
+cargo run -p dmto-cli -- trust-id <hex>    # trust the destination issuer
+cargo run -p dmto-cli -- exchange 3        # convert 3 of the source issuer at the rate
+```
+
+The exchange melts the source issuer's notes and issues the destination's, so value is
+conserved at the posted rate and both issuers' supply figures stay correct.
 
 ## Where this is going
 

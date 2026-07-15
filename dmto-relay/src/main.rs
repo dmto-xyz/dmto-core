@@ -3,9 +3,11 @@
 //! Phase 1 hosts the mint's HTTP API (issue / swap / melt / keyset). Later phases
 //! add message routing and store-and-forward on top of the same server.
 
+mod exchange;
 mod mint_api;
 mod store;
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::{
@@ -15,18 +17,20 @@ use axum::{
 };
 use dmto_ecash::{
     api::{
-        MeltRequest, MeltResponse, MintInfo, MintRequest, SignatureResponse, SupplyResponse,
-        SwapRequest,
+        ExchangeRate, MeltRequest, MeltResponse, MintInfo, MintRequest, SignatureResponse,
+        SupplyResponse, SwapRequest,
     },
     issuer::IssuerId,
     keyset::PublicKeyset,
 };
-use secp256k1::{PublicKey, Secp256k1};
+use secp256k1::{PublicKey, Secp256k1, SecretKey};
+use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
 
+use exchange::Exchange;
 use mint_api::{AppError, MintApi, PgMint};
 
-/// Default denominations (powers of two) the mint is initialized with.
+/// Default denominations (powers of two) each mint is initialized with.
 const DENOMINATIONS: &[u64] = &[1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024];
 
 #[tokio::main]
@@ -38,19 +42,58 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pool = PgPoolOptions::new().connect(&db_url).await?;
     sqlx::migrate!("./migrations").run(&pool).await?;
 
-    let keys = store::load_or_create_keys(&pool, DENOMINATIONS).await?;
-    let issuer_sk = store::load_or_create_issuer(&pool).await?;
-    let issuer = IssuerId::new(PublicKey::from_secret_key(&Secp256k1::new(), &issuer_sk));
-    let mint = Arc::new(PgMint::new(pool, keys, issuer));
-    println!("dmto-relay issuer: {issuer}");
-    println!("dmto-relay mint keyset: {}", mint.public_keyset().id);
+    // Primary mint serves the single-mint API; the secondary lets us demonstrate
+    // cross-issuer exchange within one relay.
+    let primary = Arc::new(load_mint(&pool, "primary").await?);
+    let secondary = Arc::new(load_mint(&pool, "secondary").await?);
+    println!(
+        "dmto-relay primary issuer {} keyset {}",
+        primary.mint_info().issuer,
+        primary.keyset_id()
+    );
+    println!(
+        "dmto-relay secondary issuer {} keyset {}",
+        secondary.mint_info().issuer,
+        secondary.keyset_id()
+    );
+
+    // Posted rates: 1 primary = 2 secondary, 2 secondary = 1 primary.
+    let rates = vec![
+        ExchangeRate {
+            from: primary.keyset_id(),
+            to: secondary.keyset_id(),
+            num: 2,
+            den: 1,
+        },
+        ExchangeRate {
+            from: secondary.keyset_id(),
+            to: primary.keyset_id(),
+            num: 1,
+            den: 2,
+        },
+    ];
+    let mints = HashMap::from([
+        (primary.keyset_id(), primary.clone()),
+        (secondary.keyset_id(), secondary.clone()),
+    ]);
+    let ex = Arc::new(Exchange::new(mints, rates));
+
+    let app = app(primary).merge(exchange::router(ex));
 
     let addr = std::env::var("DMTO_RELAY_ADDR").unwrap_or_else(|_| "0.0.0.0:3000".to_string());
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     println!("dmto-relay listening on {addr}");
 
-    axum::serve(listener, app(mint)).await?;
+    axum::serve(listener, app).await?;
     Ok(())
+}
+
+/// Load (or create) the mint for `label`, including its persisted issuer key.
+async fn load_mint(pool: &PgPool, label: &str) -> Result<PgMint, Box<dyn std::error::Error>> {
+    let keys = store::load_or_create_keys(pool, label, DENOMINATIONS).await?;
+    let issuer_sk: SecretKey = store::load_or_create_issuer(pool, label).await?;
+    let issuer = IssuerId::new(PublicKey::from_secret_key(&Secp256k1::new(), &issuer_sk));
+    Ok(PgMint::new(pool.clone(), label, keys, issuer))
 }
 
 /// Build the router over any [`MintApi`]. Generic so tests can supply an
@@ -261,13 +304,15 @@ mod tests {
         });
         let pool = PgPoolOptions::new().connect(&db_url).await.unwrap();
         sqlx::migrate!("./migrations").run(&pool).await.unwrap();
-        let keys = store::load_or_create_keys(&pool, DENOMINATIONS)
+        let keys = store::load_or_create_keys(&pool, "primary", DENOMINATIONS)
             .await
             .unwrap();
-        let issuer_sk = store::load_or_create_issuer(&pool).await.unwrap();
+        let issuer_sk = store::load_or_create_issuer(&pool, "primary")
+            .await
+            .unwrap();
         let issuer = IssuerId::new(PublicKey::from_secret_key(&Secp256k1::new(), &issuer_sk));
 
-        let mint1 = PgMint::new(pool.clone(), keys.clone(), issuer);
+        let mint1 = PgMint::new(pool.clone(), "primary", keys.clone(), issuer);
         let pubkey = mint1.public_keyset().keys[&4];
 
         // Issue a value-4 note (unique secret so reruns don't collide).
@@ -305,7 +350,7 @@ mod tests {
         assert_eq!(melted.melted, 4);
 
         // A brand-new instance sharing the pool rejects the same note.
-        let mint2 = PgMint::new(pool, keys, issuer);
+        let mint2 = PgMint::new(pool, "primary", keys, issuer);
         let result = mint2.process_melt(MeltRequest { inputs: vec![note] }).await;
         assert!(matches!(
             result,

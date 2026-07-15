@@ -33,6 +33,8 @@ use sqlx::{PgPool, Row};
 pub enum AppError {
     /// A domain error from the ecash core.
     Ecash(Error),
+    /// A relay-level bad request (e.g. an unknown keyset or unsupported rate).
+    BadRequest(String),
     /// A database error.
     Db(sqlx::Error),
 }
@@ -56,6 +58,7 @@ impl IntoResponse for AppError {
                 (StatusCode::CONFLICT, Error::DoubleSpend.to_string())
             }
             AppError::Ecash(e) => (StatusCode::BAD_REQUEST, e.to_string()),
+            AppError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg),
             AppError::Db(e) => {
                 // Don't leak database internals to clients.
                 eprintln!("database error: {e}");
@@ -141,22 +144,33 @@ impl MintApi for InMemoryMint {
 /// Postgres-backed mint: signing keys held in memory, spent secrets in the database.
 pub struct PgMint {
     pool: PgPool,
+    label: String,
     keys: HashMap<u64, MintKey>,
     id: KeysetId,
     issuer: IssuerId,
 }
 
 impl PgMint {
-    pub fn new(pool: PgPool, mint_keys: Vec<MintKey>, issuer: IssuerId) -> Self {
+    pub fn new(
+        pool: PgPool,
+        label: impl Into<String>,
+        mint_keys: Vec<MintKey>,
+        issuer: IssuerId,
+    ) -> Self {
         let keys: HashMap<u64, MintKey> = mint_keys.into_iter().map(|k| (k.value, k)).collect();
         let pubkeys = keys.iter().map(|(&v, k)| (v, k.pubkey)).collect();
         let id = KeysetId::derive(&pubkeys);
         Self {
             pool,
+            label: label.into(),
             keys,
             id,
             issuer,
         }
+    }
+
+    pub fn keyset_id(&self) -> KeysetId {
+        self.id
     }
 
     /// Blind-sign each output, failing if a denomination is unknown.
@@ -189,11 +203,13 @@ impl PgMint {
             if !key.verify_note(note)? {
                 return Err(Error::InvalidSignature.into());
             }
-            let result = sqlx::query("INSERT INTO spent_secret (secret, value) VALUES ($1, $2)")
-                .bind(&note.secret)
-                .bind(note.value as i64)
-                .execute(&mut *tx)
-                .await;
+            let result =
+                sqlx::query("INSERT INTO spent_secret (label, secret, value) VALUES ($1, $2, $3)")
+                    .bind(&self.label)
+                    .bind(&note.secret)
+                    .bind(note.value as i64)
+                    .execute(&mut *tx)
+                    .await;
             match result {
                 Ok(_) => {}
                 Err(e) if is_unique_violation(&e) => return Err(Error::DoubleSpend.into()),
@@ -202,9 +218,10 @@ impl PgMint {
         }
         for out in issued {
             sqlx::query(
-                "INSERT INTO issued_total (value, total) VALUES ($1, $2)
-                 ON CONFLICT (value) DO UPDATE SET total = issued_total.total + EXCLUDED.total",
+                "INSERT INTO issued_total (label, value, total) VALUES ($1, $2, $3)
+                 ON CONFLICT (label, value) DO UPDATE SET total = issued_total.total + EXCLUDED.total",
             )
+            .bind(&self.label)
             .bind(out.value as i64)
             .bind(out.value as i64)
             .execute(&mut *tx)
@@ -267,12 +284,14 @@ impl MintApi for PgMint {
     }
 
     async fn supply(&self) -> Result<SupplyResponse, AppError> {
-        let issued_rows = sqlx::query("SELECT value, total FROM issued_total")
+        let issued_rows = sqlx::query("SELECT value, total FROM issued_total WHERE label = $1")
+            .bind(&self.label)
             .fetch_all(&self.pool)
             .await?;
         let redeemed_rows = sqlx::query(
-            "SELECT value, SUM(value)::BIGINT AS redeemed FROM spent_secret GROUP BY value",
+            "SELECT value, SUM(value)::BIGINT AS redeemed FROM spent_secret WHERE label = $1 GROUP BY value",
         )
+        .bind(&self.label)
         .fetch_all(&self.pool)
         .await?;
 

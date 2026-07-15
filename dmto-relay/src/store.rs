@@ -31,10 +31,11 @@ impl From<sqlx::Error> for StoreError {
     }
 }
 
-/// Load the relay's issuer private key, generating and persisting one the first
-/// time. The issuer identity (its public key) is thus stable across restarts.
-pub async fn load_or_create_issuer(pool: &PgPool) -> Result<SecretKey, StoreError> {
-    if let Some(row) = sqlx::query("SELECT privkey FROM issuer_key LIMIT 1")
+/// Load the `label` mint's issuer private key, generating and persisting one the
+/// first time. The issuer identity is thus stable across restarts.
+pub async fn load_or_create_issuer(pool: &PgPool, label: &str) -> Result<SecretKey, StoreError> {
+    if let Some(row) = sqlx::query("SELECT privkey FROM issuer_key WHERE label = $1")
+        .bind(label)
         .fetch_optional(pool)
         .await?
     {
@@ -43,20 +44,23 @@ pub async fn load_or_create_issuer(pool: &PgPool) -> Result<SecretKey, StoreErro
     }
 
     let sk = SecretKey::new(&mut secp256k1::rand::thread_rng());
-    sqlx::query("INSERT INTO issuer_key (privkey) VALUES ($1)")
+    sqlx::query("INSERT INTO issuer_key (label, privkey) VALUES ($1, $2)")
+        .bind(label)
         .bind(sk.secret_bytes().to_vec())
         .execute(pool)
         .await?;
     Ok(sk)
 }
 
-/// Load the mint's signing keys from the database, generating and persisting a
-/// fresh set for `denoms` the first time (when the table is empty).
+/// Load the `label` mint's signing keys, generating and persisting a fresh set
+/// for `denoms` the first time (when the label has no keys yet).
 pub async fn load_or_create_keys(
     pool: &PgPool,
+    label: &str,
     denoms: &[u64],
 ) -> Result<Vec<MintKey>, StoreError> {
-    let rows = sqlx::query("SELECT value, privkey FROM mint_key ORDER BY value")
+    let rows = sqlx::query("SELECT value, privkey FROM mint_key WHERE label = $1 ORDER BY value")
+        .bind(label)
         .fetch_all(pool)
         .await?;
 
@@ -65,7 +69,8 @@ pub async fn load_or_create_keys(
         let mut tx = pool.begin().await?;
         for &value in denoms {
             let key = MintKey::new(value);
-            sqlx::query("INSERT INTO mint_key (value, privkey) VALUES ($1, $2)")
+            sqlx::query("INSERT INTO mint_key (label, value, privkey) VALUES ($1, $2, $3)")
+                .bind(label)
                 .bind(value as i64)
                 .bind(key.privkey.secret_bytes().to_vec())
                 .execute(&mut *tx)

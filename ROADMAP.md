@@ -54,7 +54,7 @@ paths; notes and proofs round-trip through serde. **Met.**
 another process, across restarts; total supply is queryable. **Met.**
 **SPEC:** §2, §3.1, §3.2.
 
-## Phase 2 — Multi-issuer economy
+## Phase 2 — Multi-issuer economy ✅
 
 **Goal:** many independent issuers, cross-issuer exchange, and user-controlled trust.
 
@@ -64,12 +64,16 @@ another process, across restarts; total supply is queryable. **Met.**
 - [x] **Trust config:** per-user list of accepted issuers with optional balance limits;
       revocable (`trust [limit]` / `untrust` / `trusted`). Minting requires a trusted issuer
       and stays within its limit.
-- [ ] **Exchange:** swap issuer-A ecash for issuer-B ecash at a posted/negotiated rate.
-- [ ] Exchange/quote endpoint an issuer or server can expose.
+- [x] **Exchange:** a relay hosting two issuers converts one's ecash into the other's at a
+      posted rate (`POST /v1/exchange`): melts the source notes, issues the destination's.
+- [x] Exchange/quote endpoint (`GET /v1/rates`) advertising hosted issuers and posted rates.
 
 **Exit criteria:** a user acquires issuer-B ecash by paying with issuer-A ecash through
-an exchange, with the trade honoring the user's trust config.
+an exchange, with the trade honoring the user's trust config. **Met.**
 **SPEC:** §3.1, §3.3, §3.4.
+
+> Decision recorded: relay-hosted exchange with **posted prices** (num/den rates). Order
+> book / AMM and a reverse-direction CLI source selector are future work.
 
 ## Phase 3 — Relay transport
 
@@ -140,10 +144,12 @@ on their behalf within the granted constraints.
 - **Transport:** HTTP (request/response) as the default, WebSocket for real-time
   connections (e.g. live message delivery, notifications).
 - **Persistence:** PostgreSQL accessed via `sqlx`.
+- **HTTP framework:** axum.
+- **Exchange:** relay-hosted, **posted prices** (integer num/den rates). Order book / AMM
+  deferred.
 
 ## Open questions
 
 - Backing of ecash units (abstract units vs. Lightning/on-chain) — currently abstract.
-- Exchange rate discovery (posted price vs. order book vs. AMM).
 - Identity/addressing scheme for users and issuers.
-- HTTP server framework: assuming **axum** unless decided otherwise.
+- Reverse-direction exchange from the CLI (pick the source issuer, not just the primary).
